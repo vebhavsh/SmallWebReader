@@ -9,10 +9,10 @@ dotenv.config();
 
 const app = express();
 
-// Safe multi-origin CORS configuration (support port 3000 and configured origin)
+// Safe multi-origin CORS configuration (support port 3002 and configured origin)
 const allowedOrigins = new Set([
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
+  'http://localhost:3002',
+  'http://127.0.0.1:3002',
   process.env.CORS_ORIGIN || 'http://localhost:5173',
 ]);
 

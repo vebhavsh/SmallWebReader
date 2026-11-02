@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Bookmark, HistoryEntry } from '../../types/article';
-import { getBookmarks, removeBookmark, getHistory } from '../../utils/storage';
+import { Bookmark, FeedArticle, FollowedFeed, HistoryEntry } from '../../types/article';
+import { getBookmarks, removeBookmark, getHistory, getFollowedFeeds, getFeedArticles, updateFollowedFeedHomepage, unfollowFeed } from '../../utils/storage';
+import { CachedArticleRecord, listCachedArticles } from '../../utils/offlineStore';
+import { RelatedFeedValidation, validateRelatedFeed } from '../../services/feedService';
 import { Button } from '../ui/Button';
 
 export interface LibraryViewProps {
   onSelectArticleUrl: (url: string) => void;
   onNotify: (msg: string, type?: 'success' | 'error' | 'info') => void;
-  initialTab?: 'bookmarks' | 'recent';
+  initialTab?: 'following' | 'bookmarks' | 'offline' | 'recent';
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
@@ -16,20 +18,60 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 }) => {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'bookmarks' | 'recent'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'following' | 'bookmarks' | 'offline' | 'recent'>(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title' | 'time'>('newest');
   const [genreFilter, setGenreFilter] = useState<string>('All');
+  const [followedFeeds, setFollowedFeeds] = useState<FollowedFeed[]>([]);
+  const [feedArticles, setFeedArticles] = useState<FeedArticle[]>([]);
+  const [expandedFeedUrl, setExpandedFeedUrl] = useState<string | null>(null);
+  const [feedValidations, setFeedValidations] = useState<Record<string, RelatedFeedValidation | undefined>>({});
+  const [cachedArticles, setCachedArticles] = useState<CachedArticleRecord[]>([]);
+  const [cacheError, setCacheError] = useState<string | null>(null);
 
   useEffect(() => {
     setBookmarks(getBookmarks());
     setHistory(getHistory());
+    setFollowedFeeds(getFollowedFeeds());
+    setFeedArticles(getFeedArticles());
+    void listCachedArticles()
+      .then(setCachedArticles)
+      .catch(() => setCacheError('Offline articles could not be loaded from this browser.'));
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'following' || followedFeeds.length === 0) return;
+    let cancelled = false;
+    void Promise.all(followedFeeds.map(async (feed) => {
+      try {
+        return [feed.feedUrl, await validateRelatedFeed(feed.feedUrl, feed.homepageUrl)] as const;
+      } catch (error) {
+        return [feed.feedUrl, {
+          feedValid: false,
+          homepageUrl: null,
+          reason: error instanceof Error ? `Publisher could not be verified: ${error.message}` : 'Publisher could not be verified.',
+        }] as const;
+      }
+    })).then((entries) => {
+      if (cancelled) return;
+      setFeedValidations((current) => ({ ...current, ...Object.fromEntries(entries) }));
+      for (const [feedUrl, validation] of entries) {
+        if (validation.homepageUrl) updateFollowedFeedHomepage(feedUrl, validation.homepageUrl);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, followedFeeds]);
 
   const handleRemove = (url: string, title: string) => {
     removeBookmark(url);
     setBookmarks(getBookmarks());
     onNotify(`Removed "${title.length > 25 ? `${title.slice(0, 25)}…` : title}" from bookmarks.`, 'info');
+  };
+
+  const handleUnfollow = (feed: FollowedFeed) => {
+    unfollowFeed(feed.feedUrl);
+    setFollowedFeeds(getFollowedFeeds());
+    onNotify(`Unfollowed ${feed.title || feed.host || feed.feedUrl}. Your bookmarks and offline articles were kept.`, 'info');
   };
 
   // Collect available genres from items
@@ -66,6 +108,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     );
   });
 
+  const filteredFeeds = followedFeeds.filter((feed) => {
+    const q = searchQuery.toLowerCase();
+    return (feed.title || '').toLowerCase().includes(q)
+      || (feed.host || '').toLowerCase().includes(q)
+    || feed.feedUrl.toLowerCase().includes(q);
+  });
+
+  const filteredCachedArticles = cachedArticles.filter((item) => {
+    const q = searchQuery.toLowerCase();
+    return item.title.toLowerCase().includes(q)
+      || (item.siteName || '').toLowerCase().includes(q)
+      || item.url.toLowerCase().includes(q);
+  });
+
   return (
     <div style={{ maxWidth: '880px', margin: '0 auto', padding: '3rem 1.5rem', width: '100%' }}>
       {/* Header */}
@@ -78,7 +134,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             Personal Library
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginTop: '0.35rem' }}>
-            Saved articles stored securely in your browser ({bookmarks.length} {bookmarks.length === 1 ? 'item' : 'items'}).
+            Following, bookmarks, reading history and cached article content are stored in this browser.
           </p>
         </div>
 
@@ -86,7 +142,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Search saved articles..."
+            placeholder="Search your library..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -135,6 +191,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       >
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
+            onClick={() => setActiveTab('following')}
+            style={{
+              padding: '0.45rem 0.9rem',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: activeTab === 'following' ? 'var(--accent)' : 'transparent',
+              color: activeTab === 'following' ? 'var(--accent-text)' : 'var(--text-secondary)',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '0.88rem',
+              cursor: 'pointer',
+            }}
+          >
+            Following ({followedFeeds.length})
+          </button>
+          <button
             onClick={() => setActiveTab('bookmarks')}
             style={{
               padding: '0.45rem 0.9rem',
@@ -148,6 +219,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             }}
           >
             🔖 Bookmarks ({bookmarks.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('offline')}
+            style={{
+              padding: '0.45rem 0.9rem',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: activeTab === 'offline' ? 'var(--accent)' : 'transparent',
+              color: activeTab === 'offline' ? 'var(--accent-text)' : 'var(--text-secondary)',
+              border: 'none',
+              fontWeight: 600,
+              fontSize: '0.88rem',
+              cursor: 'pointer',
+            }}
+          >
+            Offline ({cachedArticles.length})
           </button>
           <button
             onClick={() => setActiveTab('recent')}
@@ -189,6 +275,80 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </div>
         )}
       </div>
+
+      {activeTab === 'following' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {filteredFeeds.length > 0 ? filteredFeeds.map((feed) => (
+            <article key={feed.feedUrl} style={{ padding: '1rem 1.25rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <button
+                  type="button"
+                  aria-expanded={expandedFeedUrl === feed.feedUrl}
+                  onClick={() => {
+                    setFeedArticles(getFeedArticles());
+                    setExpandedFeedUrl((current) => current === feed.feedUrl ? null : feed.feedUrl);
+                  }}
+                  style={{ padding: 0, border: 0, background: 'none', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', fontSize: '1.05rem', fontWeight: 700, textAlign: 'left', cursor: 'pointer' }}
+                >
+                  {feed.title || feed.host || 'Independent feed'}
+                </button>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', overflowWrap: 'anywhere', margin: '0.25rem 0' }}>
+                  Feed URL: {feed.feedUrl}
+                </p>
+                {feedValidations[feed.feedUrl]?.homepageUrl ? (
+                  <a href={feedValidations[feed.feedUrl]?.homepageUrl || undefined} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', fontSize: '0.8rem', fontWeight: 600 }}>
+                    Open website ↗
+                  </a>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                    {feedValidations[feed.feedUrl] ? 'Publisher website unavailable' : 'Checking publisher website…'}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  aria-label={`View articles from ${feed.title || feed.host || 'feed'}`}
+                  aria-expanded={expandedFeedUrl === feed.feedUrl}
+                  onClick={() => {
+                    setFeedArticles(getFeedArticles());
+                    setExpandedFeedUrl((current) => current === feed.feedUrl ? null : feed.feedUrl);
+                  }}
+                  style={{ padding: '0.45rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  {expandedFeedUrl === feed.feedUrl ? 'Hide articles' : 'View articles'}
+                </button>
+                <button type="button" aria-label={`Unfollow ${feed.title || feed.host || 'feed'}`} onClick={() => handleUnfollow(feed)} style={{ padding: '0.45rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}>
+                  Unfollow
+                </button>
+              </div>
+              {expandedFeedUrl === feed.feedUrl && (
+                <div style={{ flexBasis: '100%', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.75rem' }}>
+                  {feedArticles.filter((item) => item.feedUrl === feed.feedUrl).length > 0 ? (
+                    <ul style={{ display: 'grid', gap: '0.55rem', listStyle: 'none', margin: 0, padding: 0 }}>
+                      {feedArticles.filter((item) => item.feedUrl === feed.feedUrl).map((article) => (
+                        <li key={article.url}>
+                          <button type="button" onClick={() => onSelectArticleUrl(article.url)} style={{ padding: 0, border: 0, background: 'none', color: 'var(--accent)', textAlign: 'left', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+                            {article.title}
+                          </button>
+                          {article.publishedAt && <span style={{ display: 'block', marginTop: '0.15rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>{new Date(article.publishedAt).toLocaleDateString()}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>No articles are loaded for this feed yet. Refresh your feeds from the Dashboard to load articles.</p>
+                  )}
+                </div>
+              )}
+            </article>
+          )) : (
+            <div style={{ padding: '3rem 1.5rem', textAlign: 'center', background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)', border: '1px dashed var(--border-subtle)' }}>
+              <h3 style={{ color: 'var(--text-primary)', marginBottom: '0.4rem' }}>You are not following any feeds yet</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Follow a source from Discover to keep it in your local library.</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab 1: Bookmarks View */}
       {activeTab === 'bookmarks' && (
@@ -315,6 +475,26 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             </div>
           )}
         </>
+      )}
+
+      {activeTab === 'offline' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {cacheError && <p role="alert" style={{ color: 'var(--danger, #b42318)' }}>{cacheError}</p>}
+          {filteredCachedArticles.length > 0 ? filteredCachedArticles.map((item) => (
+            <article key={item.url} style={{ padding: '1rem 1.25rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Cached for offline reading · {item.siteName || new URL(item.url).hostname}</span>
+                <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.05rem', color: 'var(--text-primary)', marginTop: '0.25rem' }}>{item.title}</h3>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => onSelectArticleUrl(item.url)}>Open cached article</Button>
+            </article>
+          )) : !cacheError && (
+            <div style={{ padding: '3rem 1.5rem', textAlign: 'center', background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)', border: '1px dashed var(--border-subtle)' }}>
+              <h3 style={{ color: 'var(--text-primary)', marginBottom: '0.4rem' }}>No offline articles yet</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Articles you open online are cached on this device for offline reading.</p>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Tab 2: Recently Read View */}

@@ -27,7 +27,7 @@ Confirms backend service health and liveness.
 
 ## 2. Read webpage (Implemented & Verified)
 
-Safely fetches a public webpage and extracts readable plain-text content stripped of script/style tags.
+Safely fetches a public webpage and returns sanitized semantic article HTML extracted with Mozilla Readability and a cleaned publisher-container fallback.
 
 - **Method:** `POST`
 - **Path:** `/api/read`
@@ -43,7 +43,25 @@ Safely fetches a public webpage and extracts readable plain-text content strippe
   {
     "url": "https://example.com/article",
     "title": "Example Article",
-    "content": "Extracted readable page text..."
+    "byline": "Example Author",
+    "excerpt": "Publisher-provided summary",
+    "publishedDate": "2025-03-04T10:30:00.000Z",
+    "siteName": "Example Publisher",
+    "leadImageUrl": "https://example.com/image.jpg",
+    "contentType": "html",
+    "content": "<h2>Article section</h2><p>Extracted article content...</p>"
+  }
+  ```
+
+Metadata values may be `null` when the publisher does not provide them. Article HTML preserves semantic structure and is sanitized server-side; the frontend must continue sanitizing it with DOMPurify before rendering. Relative links and images are resolved against the fetched article URL, and only HTTP(S) targets are retained.
+
+- **Extraction Error `422 Unprocessable Entity`:**
+  ```json
+  {
+    "error": {
+      "code": "EXTRACTION_FAILED",
+      "message": "The publisher page did not contain a readable article. Open the original page or try another article URL."
+    }
   }
   ```
 
@@ -80,6 +98,7 @@ Returns feed recommendations based on aggregate co-occurrence in user contributi
 - Excludes feeds already in the user's query list.
 - Enforces minimum support threshold `k = 3` for specific co-occurrence evidence reasons.
 - Never persists raw query lists or reader identities.
+- Returns the subscription feed URL separately from optional publisher homepage metadata.
 
 - **Method:** `POST`
 - **Path:** `/api/discovery/query`
@@ -101,6 +120,7 @@ Returns feed recommendations based on aggregate co-occurrence in user contributi
         "canonicalUrl": "https://otherblog.org/rss",
         "host": "otherblog.org",
         "title": "Other Blog",
+        "websiteUrl": "https://otherblog.org/",
         "reason": "Frequently followed together with blogs in your feed list",
         "supportCount": 14
       }
@@ -108,6 +128,7 @@ Returns feed recommendations based on aggregate co-occurrence in user contributi
     "count": 1
   }
   ```
+- `websiteUrl` is nullable when no publisher homepage metadata is available. Clients must validate it as an HTTP(S) HTML destination before exposing it as a website link; `canonicalUrl` remains the RSS/Atom subscription URL.
 
 ---
 
@@ -154,7 +175,7 @@ Accepts an explicitly consented batch of feeds to increment aggregate popularity
 
 ## 6. Popular feed directory (Implemented & Verified)
 
-Returns popular eligible feeds and curated seeds. Works without requiring user contribution.
+Returns eligible non-seed feeds with genuine opt-in aggregate contributions. Seed/directory entries are not used as popularity counts. When no eligible contribution aggregates exist, `feeds` is empty and `total` is `0`.
 
 - **Method:** `GET`
 - **Path:** `/api/discovery/popular?limit=20&offset=0`
@@ -169,8 +190,8 @@ Returns popular eligible feeds and curated seeds. Works without requiring user c
         "canonicalUrl": "https://popularblog.com/feed",
         "host": "popularblog.com",
         "title": "Popular Blog",
-        "aggregateCount": 42,
-        "isSeed": true
+        "aggregateCount": 3,
+        "isSeed": false
       }
     ],
     "total": 1,
@@ -199,7 +220,10 @@ Standard Status Codes:
 - `403 CONSENT_REQUIRED`: Submission attempted without explicit user opt-in (`"consent": true`).
 - `403 URL_NOT_ALLOWED`: Blocked private, localhost, link-local, multicast, or cloud metadata target.
 - `422 VALIDATION_ERROR`: Required fields missing, empty, or incorrect type.
+- `422 EXTRACTION_FAILED`: Page fetch succeeded, but no usable article was found.
 - `429 RATE_LIMIT_EXCEEDED`: Request threshold exceeded for current hourly window.
 - `502 PAGE_FETCH_FAILED`: Host not found, remote 4xx/5xx, unsupported content type, or excessive redirects.
 - `504 FETCH_TIMEOUT`: Upstream connection or read exceeded timeout (10s).
 - `500 INTERNAL_ERROR`: Internal server failure (never exposes stack traces).
+- `422 EXTRACTION_FAILED`: Page fetch succeeded, but neither article extraction nor the safe fallback found usable content.
+- `503 DEMO_MODE`: Discovery contribution was not recorded because explicit demo mode is enabled.

@@ -111,7 +111,7 @@ Liveness check confirming that the server is active.
   ```
 
 ### 2. `POST /api/read`
-Safely fetches a publicly accessible webpage, guards against SSRF, redirects, oversized payloads, and timeouts, and extracts the readable text content.
+Safely fetches a publicly accessible webpage, guards against SSRF, redirects, oversized payloads, and timeouts, and returns sanitized semantic article HTML using Mozilla Readability with a cleaned publisher-container fallback.
 
 - **Request Headers:** `Content-Type: application/json`
 - **Request Body:**
@@ -125,7 +125,8 @@ Safely fetches a publicly accessible webpage, guards against SSRF, redirects, ov
   {
     "url": "https://example.com/article",
     "title": "Example Article",
-    "content": "Extracted readable page text..."
+    "contentType": "html",
+    "content": "<h2>Article section</h2><p>Extracted article content...</p>"
   }
   ```
 
@@ -158,9 +159,9 @@ Safely fetches public RSS, Atom, XML feeds, or HTML homepages for client-side fe
   - `504 FETCH_TIMEOUT`: Request to target URL timed out.
   - `500 INTERNAL_ERROR`: Unexpected internal failure (never leaks stack traces).
 
-## Planned Endpoints (Not Yet Implemented)
+## Discovery Endpoints
 
-The following endpoints are documented in `docs/API_CONTRACT.md` and are planned for future phases:
-- `POST /api/discovery/query` — Deterministic feed recommendations.
-- `POST /api/discovery/submit` — Explicitly consented aggregate feed contributions.
-- `GET /api/discovery/popular` — Curated and top seed feed directory.
+The discovery endpoints use PostgreSQL by default. Demo discovery is enabled only with `USE_DEMO_DISCOVERY=true`; database errors return an error response and never fall back to fixtures. Popularity excludes synthetic seed-directory rows and remains empty until genuine aggregate contributions exist.
+- `POST /api/discovery/query` — Deterministic feed recommendations with a minimum support threshold.
+- `POST /api/discovery/submit` — Explicitly consented aggregate feed contributions; disabled in demo mode.
+- `GET /api/discovery/popular` — Genuine aggregate popularity.

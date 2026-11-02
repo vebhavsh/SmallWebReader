@@ -1,6 +1,6 @@
 # SmallWebReader — Test Plan
 
-> Test suite coverage plan for implemented and planned endpoints.
+> Automated coverage for the current implemented endpoints.
 
 ## 1. Verified & Automated Test Suites (Current Status)
 
@@ -29,34 +29,36 @@
   - [x] Non-HTML content types (e.g. `image/png`, `application/json`) rejected with 502 `PAGE_FETCH_FAILED`.
   - [x] Stream errors and remote 5xx handled cleanly with 502.
   - [x] Malformed/unclosed HTML tags stripped without crashing or leaking script contents.
+  - [x] Readability extraction preserves article structure, metadata, relative links, and images.
+  - [x] Publisher-container and Project Gutenberg fallback extraction preserve long-form text.
+  - [x] Scripts, event handlers, and unsafe URL schemes are removed.
+  - [x] Empty and navigation-only pages return `EXTRACTION_FAILED`.
 
-### C. Smoke Testing
+### C. Safe Fetch (`GET /api/fetch?url=...`)
+- [x] Validates URL query parameter and uses the same SSRF and redirect protections as `/api/read`.
+- [x] Permits RSS/Atom XML content types and enforces response-size and timeout bounds.
+
+### D. Discovery
+- [x] Development mode uses PostgreSQL when `USE_DEMO_DISCOVERY=false`; demo fixtures require the explicit `true` flag.
+- [x] Popular includes only genuine aggregate contributions and returns an honest empty state without data.
+- [x] Related excludes followed feeds, applies the `k = 3` co-occurrence threshold, and labels curated directory fallbacks.
+- [x] Database failures return useful errors; no fixture fallback is used in live mode.
+- [x] Contributions require explicit consent and are disabled in demo mode.
+
+### E. Frontend discovery and reader
+- [x] Follow/unfollow refreshes Related/Popular results and persists to the Library.
+- [x] Related feed cards validate RSS/Atom content through the safe fetch proxy before enabling Follow.
+- [x] RSS channel links and Atom HTML alternate links resolve publisher homepages; candidate homepages are verified as HTML through the safe fetch proxy.
+- [x] Related “Open website” links use only verified HTTP(S) publisher homepages, never raw RSS/Atom URLs.
+- [x] Missing or unsafe homepage metadata shows a disabled “Website unavailable” action and a useful reason; raw XML is not a primary reader action.
+- [x] Verified homepage metadata remains separate from subscription feed URLs; feed metadata checks are cached for the page session.
+- [x] Broken/unverified feeds cannot be followed; a verified publisher homepage may still be opened independently.
+- [x] Legacy Marginalian and Increment recommendations use publisher-advertised replacement feeds without deleting legacy database rows or subscriptions.
+- [x] Feed URLs remain unchanged for subscription, refresh, and follow/unfollow.
+- [x] Curated feed cards do not send `.example` sample article URLs to extraction.
+- [x] DOMPurify remains enabled and unsafe link/image sources are removed.
+- [x] Article structure, lists, quotes, code, images, and tables have reader styling.
+
+### F. Smoke Testing
 - [x] In-process local smoke test script (`npm run test:smoke`) verifies core behaviors without internet access.
 - [x] Optional live URL testing via `SMOKE_TEST_URL` environment variable.
-
----
-
-## 2. Planned Test Suites (To Be Implemented With Future Endpoints)
-
-### A. Safe Fetch (`GET /api/fetch?url=...`)
-- [ ] Validates URL query parameter.
-- [ ] Enforces identical SSRF and redirect rules as `/api/read`.
-- [ ] Permits RSS/Atom XML content types (`application/rss+xml`, `application/atom+xml`, `text/xml`).
-- [ ] Enforces 5MB response-size and 10s timeout limits.
-
-### B. Popular Feeds (`GET /api/discovery/popular`)
-- [ ] Returns curated seed feeds without user contribution.
-- [ ] Respects limit query parameter.
-- [ ] Handles database connection failures safely with standard error format.
-
-### C. Discovery Contribution (`POST /api/discovery/submit`)
-- [ ] Rejects submissions without explicit consent payload/flag.
-- [ ] Rejects malformed or excessive feed list batches.
-- [ ] Verifies database atomic increment of `feed_pairs` and `feed_popularity`.
-- [ ] Verifies raw submission batches and client IPs are never logged or persisted.
-- [ ] Enforces HMAC rate limiting and handles 429 responses.
-
-### D. Discovery Recommendations (`POST /api/discovery/query`)
-- [ ] Excludes query feeds from the returned recommendations.
-- [ ] Verifies support threshold `k = 3`: feeds with < 3 co-occurrences return generic reasons.
-- [ ] Verifies query feed lists are never persisted to disk or database.

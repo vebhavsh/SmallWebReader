@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTheme } from '../theme/ThemeProvider';
 import { THEME_CONFIGS, ThemeConfig } from '../../theme/themeConfig';
 import { FontFamily } from '../../types/article';
 import { soundtrackEngine } from '../../services/soundtrackService';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { clearCachedArticles, listCachedArticles } from '../../utils/offlineStore';
+import { getDiscoveryConsent, setDiscoveryConsent } from '../../utils/storage';
 
 export interface SettingsViewProps {
   onNotify?: (msg: string, type?: 'success' | 'error' | 'info') => void;
@@ -24,33 +26,68 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNotify, onRestartO
   } = useTheme();
 
   const [isConfirmClearOpen, setIsConfirmClearOpen] = useState(false);
+  const [discoveryConsent, setDiscoveryConsentState] = useState(getDiscoveryConsent);
+  const [cachedArticleCount, setCachedArticleCount] = useState<number | null>(null);
 
-  const handleClearAllData = () => {
-    localStorage.clear();
-    setIsConfirmClearOpen(false);
-    onNotify?.('All local reading data and preferences cleared.', 'info');
-    setTimeout(() => {
-      window.location.reload();
-    }, 800);
+  useEffect(() => {
+    void listCachedArticles()
+      .then((articles) => setCachedArticleCount(articles.length))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Unknown cache error.';
+        onNotify?.(`Could not read the offline cache: ${message}`, 'error');
+      });
+  }, [onNotify]);
+
+  const handleClearOfflineCache = async () => {
+    try {
+      await clearCachedArticles();
+      setCachedArticleCount(0);
+      onNotify?.('Offline article cache cleared. Bookmarks, feed subscriptions and reading history were kept.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown offline cache error.';
+      onNotify?.(`Could not clear offline articles: ${message}`, 'error');
+    }
   };
 
-  const handleExportData = () => {
-    const data = {
-      profile: localStorage.getItem('swr_user_profile_v1'),
-      bookmarks: localStorage.getItem('swr_bookmarks_v1'),
-      history: localStorage.getItem('swr_history_v1'),
-      dailyStats: localStorage.getItem('swr_daily_stats_v1'),
-      goals: localStorage.getItem('swr_goals_v1'),
-      exportedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `smallwebreader-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    onNotify?.('Local data exported successfully as JSON.', 'success');
+  const handleClearAllData = async () => {
+    try {
+      await clearCachedArticles();
+      localStorage.clear();
+      setIsConfirmClearOpen(false);
+      onNotify?.('Local reading data, followed feeds, preferences, and cached articles were cleared.', 'info');
+      setTimeout(() => window.location.reload(), 800);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown local data storage error.';
+      onNotify?.(`Could not clear all local data: ${message}`, 'error');
+    }
+  };
+
+  const handleExportData = async () => {
+    try {
+      const data = {
+        profile: localStorage.getItem('swr_user_profile_v1'),
+        bookmarks: localStorage.getItem('swr_bookmarks_v1'),
+        history: localStorage.getItem('swr_history_v1'),
+        dailyStats: localStorage.getItem('swr_daily_stats_v1'),
+        goals: localStorage.getItem('swr_goals_v1'),
+        followedFeeds: localStorage.getItem('swr_followed_feeds_v1'),
+        feedArticles: localStorage.getItem('swr_feed_articles_v1'),
+        readArticles: localStorage.getItem('swr_read_articles_v1'),
+        cachedArticles: await listCachedArticles(),
+        exportedAt: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `smallwebreader-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      onNotify?.('Local data exported successfully as JSON.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown local data export error.';
+      onNotify?.(`Could not export local data: ${message}`, 'error');
+    }
   };
 
   return (
@@ -356,7 +393,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNotify, onRestartO
           Privacy, Storage & Cloud Status
         </h3>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-          SmallWebReader operates locally by default. Your reading history and bookmarks never leave this device.
+          SmallWebReader operates locally by default.           No account is required. Reading history, bookmarks, preferences, subscriptions and article caches are stored in this browser.
         </p>
 
         {/* Cloud Status Notice */}
@@ -378,9 +415,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNotify, onRestartO
               Cloud Sync: Disabled (Local Mode)
             </div>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              Pending team backend integration. All bookmarks, goals, and history are stored securely in browser localStorage.
+              Public URLs are sent to the configured API only when you request article/feed fetching or related discovery. Reading history and bookmarks are not sent; discovery contribution is a separate opt-in action.
             </div>
           </div>
+        </div>
+
+        <div style={{ marginBottom: '1.5rem', padding: '1rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 600 }}>
+            <input
+              type="checkbox"
+              checked={discoveryConsent}
+              onChange={(event) => {
+                const consent = event.target.checked;
+                setDiscoveryConsentState(consent);
+                setDiscoveryConsent(consent);
+                onNotify?.(consent ? 'Discovery contribution opt-in enabled. No data is sent until you submit a contribution.' : 'Discovery contribution opt-in disabled.', 'info');
+              }}
+            />
+            <span>Allow opt-in aggregate discovery contributions</span>
+          </label>
+          <p style={{ margin: '0.5rem 0 0 1.55rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+            Enabling this only records your choice in this browser. Feed lists are sent only when you submit a contribution in Discover; no reading history, article content, or persistent reader ID is sent.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem', padding: '1rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+          <div>
+            <div style={{ color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 600 }}>Offline article cache</div>
+            <p style={{ marginTop: '0.25rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+              {cachedArticleCount === null ? 'Checking this device…' : `${cachedArticleCount} cached article${cachedArticleCount === 1 ? '' : 's'} stored in IndexedDB.`}
+            </p>
+          </div>
+          <Button variant="secondary" onClick={() => void handleClearOfflineCache()} disabled={cachedArticleCount === 0}>
+            Clear offline cache
+          </Button>
         </div>
 
         {/* Action Buttons */}
@@ -408,7 +476,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNotify, onRestartO
               cursor: 'pointer',
             }}
           >
-            Clear All Local Storage
+            Clear All Local Data
           </button>
         </div>
       </div>
@@ -420,7 +488,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNotify, onRestartO
         title="Reset All Local Data?"
       >
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: 1.5, marginBottom: '1.5rem' }}>
-          This will purge all bookmarks, reading history, daily stats, custom goals, and onboarding settings. The application will reload into its default initial state.
+          This will remove followed feeds, feed posts, bookmarks, reading history, read state, preferences, statistics, and cached article content from this browser. The app shell may remain cached for offline startup.
         </p>
 
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>

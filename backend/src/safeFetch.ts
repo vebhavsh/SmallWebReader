@@ -1,6 +1,8 @@
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
+import { Readable } from 'stream';
+import { createBrotliDecompress, createGunzip, createInflate } from 'zlib';
 import { safeResolveHostname, isBlockedAddress } from './urlSecurity';
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,7 @@ export async function safeFetch(
         Host: initialUrl.hostname,
         'User-Agent': 'SmallWebReader/0.1 (safe-fetch)',
         Accept: acceptHeader,
+        'Accept-Encoding': 'gzip, deflate, br',
         // Deliberately omit: Cookie, Authorization, X-Forwarded-*, etc.
       },
       timeout: FETCH_TIMEOUT_MS,
@@ -178,21 +181,64 @@ export async function safeFetch(
 
       // ── Body collection with size limit ───────────────────────────────
       const chunks: Buffer[] = [];
-      let totalBytes = 0;
+      let compressedBytes = 0;
+      let decodedBytes = 0;
+      let settled = false;
+      const finish = (result: FetchResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+      const failForSize = () => {
+        if (settled) return;
+        req.destroy();
+        finish({ ok: false, code: 'PAGE_FETCH_FAILED', message: 'Response exceeds maximum allowed size.' });
+      };
+
+      const encodings = (res.headers['content-encoding'] ?? 'identity')
+        .split(',')
+        .map((encoding) => encoding.trim().toLowerCase())
+        .filter((encoding) => encoding && encoding !== 'identity')
+        .reverse();
+
+      let decodedStream: Readable = res;
+      for (const encoding of encodings) {
+        const decoder = encoding === 'gzip' || encoding === 'x-gzip' ? createGunzip()
+          : encoding === 'deflate' ? createInflate()
+          : encoding === 'br' ? createBrotliDecompress()
+          : null;
+        if (!decoder) {
+          req.destroy();
+          finish({ ok: false, code: 'PAGE_FETCH_FAILED', message: 'Unsupported response encoding.' });
+          return;
+        }
+        decoder.on('error', () => {
+          if (settled) return;
+          req.destroy();
+          finish({ ok: false, code: 'PAGE_FETCH_FAILED', message: 'Could not decode compressed response.' });
+        });
+        decodedStream = decodedStream.pipe(decoder);
+      }
 
       res.on('data', (chunk: Buffer) => {
-        totalBytes += chunk.length;
-        if (totalBytes > MAX_RESPONSE_BYTES) {
-          req.destroy();
-          resolve({ ok: false, code: 'PAGE_FETCH_FAILED', message: 'Response exceeds maximum allowed size.' });
-        } else {
-          chunks.push(chunk);
-        }
+        compressedBytes += chunk.length;
+        if (compressedBytes > MAX_RESPONSE_BYTES) failForSize();
       });
 
-      res.on('end', () => {
+      decodedStream.on('data', (chunk: Buffer) => {
+        if (settled) return;
+        decodedBytes += chunk.length;
+        if (decodedBytes > MAX_RESPONSE_BYTES) {
+          failForSize();
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      decodedStream.on('end', () => {
+        if (settled) return;
         const body = Buffer.concat(chunks).toString('utf8');
-        resolve({
+        finish({
           ok: true,
           finalUrl: initialUrl.href,
           body,
@@ -201,7 +247,7 @@ export async function safeFetch(
       });
 
       res.on('error', () => {
-        resolve({ ok: false, code: 'PAGE_FETCH_FAILED', message: 'Error reading response.' });
+        finish({ ok: false, code: 'PAGE_FETCH_FAILED', message: 'Error reading response.' });
       });
     });
 

@@ -119,5 +119,27 @@ describe('Database Configuration & Utilities', () => {
       expect(sql).toContain('CONSTRAINT chk_contribution_count_nonnegative CHECK (contribution_count >= 0)');
       expect(sql).toContain('CONSTRAINT chk_aggregate_count_nonnegative CHECK (aggregate_count >= 0)');
     });
+
+    it('adds separate publisher homepage metadata and preserves legacy feed records', () => {
+      const migrationFile = path.resolve(__dirname, '../../migrations/003_feed_homepage_metadata.sql');
+      expect(fs.existsSync(migrationFile)).toBe(true);
+
+      const sql = fs.readFileSync(migrationFile, 'utf8');
+      expect(sql).toContain('ADD COLUMN IF NOT EXISTS website_url TEXT');
+      expect(sql).toContain('https://feeds.feedburner.com/brainpickings/rss');
+      expect(sql).toContain('https://increment.com/feed.xml');
+      expect(sql).toContain('ON CONFLICT (canonical_url) DO UPDATE');
+      expect(sql).not.toMatch(/\bDELETE\s+FROM\s+canonical_feeds/i);
+      expect(sql).not.toMatch(/SET\s+canonical_url\s*=/i);
+    });
+
+    it('does not overwrite existing homepage metadata with an unverified null seed value', () => {
+      const seedFile = path.resolve(__dirname, '../../scripts/seedDatabase.ts');
+      const seedScript = fs.readFileSync(seedFile, 'utf8');
+
+      expect(seedScript).toContain(
+        'website_url = COALESCE(EXCLUDED.website_url, canonical_feeds.website_url)'
+      );
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NavigationSidebar } from '../components/layout/NavigationSidebar';
 import { DiscoverView } from '../components/views/DiscoverView';
 import { StatsView } from '../components/views/StatsView';
@@ -7,6 +7,8 @@ import { SettingsView } from '../components/views/SettingsView';
 import { ProfileView } from '../components/views/ProfileView';
 import { ThemeProvider } from '../components/theme/ThemeProvider';
 import { recordArticleRead, setReadingGoal } from '../utils/storage';
+import { readerApi } from '../services/api';
+import { clearRelatedFeedValidationCache } from '../services/feedService';
 
 describe('NavigationSidebar (9-item layout)', () => {
   it('renders all 9 requested navigation items', () => {
@@ -58,7 +60,10 @@ describe('NavigationSidebar (9-item layout)', () => {
 });
 
 describe('DiscoverView', () => {
-  it('renders curated demo articles and genre filters', () => {
+  it('renders real curated feed subscriptions and keeps them out of article extraction', async () => {
+    localStorage.clear();
+    readerApi.fetchProxy = undefined;
+    clearRelatedFeedValidationCache();
     const handleSelectUrl = vi.fn();
 
     render(
@@ -69,14 +74,16 @@ describe('DiscoverView', () => {
 
     expect(screen.getByText('Discover the Small Web')).toBeInTheDocument();
     expect(screen.getByText('Read Any Web Article Instantly')).toBeInTheDocument();
-    expect(screen.getByText('The Architecture of Distraction-Free Spaces')).toBeInTheDocument();
-    expect(screen.getByText('Why Simple Web Standards Outlast Modern Hype')).toBeInTheDocument();
+    expect(screen.getByText("Simon Willison's Weblog")).toBeInTheDocument();
+    expect(screen.getByText("Julia Evans' Blog")).toBeInTheDocument();
+    expect(screen.getByText('Quanta Magazine')).toBeInTheDocument();
+    expect(screen.getByText('Aeon')).toBeInTheDocument();
 
-    // Click "Read Article" on first item
-    const readButtons = screen.getAllByText('Read Article →');
-    expect(readButtons.length).toBeGreaterThan(0);
-    fireEvent.click(readButtons[0]);
-    expect(handleSelectUrl).toHaveBeenCalled();
+    expect(screen.queryByRole('link', { name: 'Open feed ↗' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('Publisher website unavailable')).toHaveLength(4));
+    expect(screen.queryByRole('link', { name: 'Open website ↗' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Follow Feed' })[0]);
+    expect(handleSelectUrl).not.toHaveBeenCalled();
   });
 });
 

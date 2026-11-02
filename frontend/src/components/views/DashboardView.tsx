@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { DailyReadingStats, ReadingGoal, HistoryEntry, Bookmark, UserProfile } from '../../types/article';
+import { AppView, DailyReadingStats, ReadingGoal, HistoryEntry, Bookmark, UserProfile, FeedArticle } from '../../types/article';
 import {
   getDailyStats,
   getTodayStats,
@@ -9,19 +9,28 @@ import {
   getHistory,
   getBookmarks,
   getUserProfile,
+  getFollowedFeeds,
+  followFeed,
+  getFeedArticles,
+  getUnreadFeedArticles,
+  isArticleRead,
 } from '../../utils/storage';
 import { useTheme } from '../theme/ThemeProvider';
+import { discoverAndFetchFeed, refreshFollowedFeeds } from '../../services/feedService';
+import { listCachedArticles } from '../../utils/offlineStore';
 
 export interface DashboardViewProps {
   onStartReading?: () => void;
   onSelectArticleUrl?: (url: string) => void;
-  onNavigateToView?: (view: any) => void;
+  onNavigateToView?: (view: AppView) => void;
+  onNotify?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   onStartReading,
   onSelectArticleUrl,
   onNavigateToView,
+  onNotify,
 }) => {
   const { currentThemeConfig, isReducedMotion } = useTheme();
 
@@ -32,6 +41,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [profile, setProfile] = useState<UserProfile>(() => getUserProfile());
+  const [followedFeedCount, setFollowedFeedCount] = useState(0);
+  const [feedArticles, setFeedArticles] = useState<FeedArticle[]>([]);
+  const [unreadArticleCount, setUnreadArticleCount] = useState(0);
+  const [cachedArticleCount, setCachedArticleCount] = useState(0);
+  const [cacheError, setCacheError] = useState<string | null>(null);
+  const [showAddBlog, setShowAddBlog] = useState(false);
+  const [blogUrl, setBlogUrl] = useState('');
+  const [isAddingBlog, setIsAddingBlog] = useState(false);
+  const [feedMessage, setFeedMessage] = useState<string | null>(null);
+  const [isRefreshingFeeds, setIsRefreshingFeeds] = useState(false);
 
   useEffect(() => {
     setStats(getDailyStats());
@@ -41,7 +60,71 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setHistory(getHistory());
     setBookmarks(getBookmarks());
     setProfile(getUserProfile());
+    setFollowedFeedCount(getFollowedFeeds().length);
+    setFeedArticles(getFeedArticles());
+    setUnreadArticleCount(getUnreadFeedArticles().length);
+    void listCachedArticles()
+      .then((articles) => setCachedArticleCount(articles.length))
+      .catch(() => setCacheError('Cached article count is unavailable in this browser.'));
   }, []);
+
+  const handleAddBlog = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsAddingBlog(true);
+    setFeedMessage(null);
+    try {
+      const discovered = await discoverAndFetchFeed(blogUrl.trim());
+      const host = new URL(discovered.feedUrl).hostname;
+      const alreadyFollowing = getFollowedFeeds().some((feed) => feed.feedUrl === discovered.feedUrl);
+      followFeed({
+        feedUrl: discovered.feedUrl,
+        title: discovered.title,
+        host,
+        source: 'manual',
+      });
+      setFollowedFeedCount(getFollowedFeeds().length);
+      setFeedArticles(getFeedArticles());
+      setUnreadArticleCount(getUnreadFeedArticles().length);
+      setBlogUrl('');
+      setShowAddBlog(false);
+      const message = alreadyFollowing
+        ? `You already follow ${discovered.title}; its feed was refreshed.`
+        : `Following ${discovered.title}. Loaded ${discovered.articles.length} articles.`;
+      setFeedMessage(message);
+      onNotify?.(message, alreadyFollowing ? 'info' : 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not discover this blog’s feed.';
+      setFeedMessage(message);
+      onNotify?.(message, 'error');
+    } finally {
+      setIsAddingBlog(false);
+    }
+  };
+
+  const handleRefreshFeeds = async () => {
+    const feeds = getFollowedFeeds();
+    if (feeds.length === 0) {
+      setFeedMessage('Follow a feed before refreshing your reading timeline.');
+      return;
+    }
+    setIsRefreshingFeeds(true);
+    setFeedMessage(null);
+    try {
+      const result = await refreshFollowedFeeds(feeds);
+      setFeedArticles(getFeedArticles());
+      setUnreadArticleCount(getUnreadFeedArticles().length);
+      const summary = `${result.fetched} articles refreshed from ${feeds.length - result.failed.length} feeds.`;
+      setFeedMessage(result.failed.length > 0 ? `${summary} ${result.failed.length} feed(s) could not be refreshed.` : summary);
+      if (result.failed.length > 0) onNotify?.(`${summary} ${result.failed.join(' ')}`, 'error');
+      else onNotify?.(summary, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not refresh followed feeds.';
+      setFeedMessage(message);
+      onNotify?.(message, 'error');
+    } finally {
+      setIsRefreshingFeeds(false);
+    }
+  };
 
   const totalArticles = stats.reduce((acc, s) => acc + s.articlesRead, 0);
   const totalMinutes = stats.reduce((acc, s) => acc + s.minutesRead, 0);
@@ -80,6 +163,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Recent 3 history entries for Continue Reading
   const continueReadingEntries = history.slice(0, 3);
+  const timelineByUrl = new Map<string, { url: string; title: string; siteName?: string | null; date: string; source: 'feed' | 'history' }>();
+  for (const item of feedArticles) {
+    timelineByUrl.set(item.url, {
+      url: item.url,
+      title: item.title,
+      siteName: item.siteName,
+      date: item.publishedAt || item.fetchedAt,
+      source: 'feed',
+    });
+  }
+  for (const item of history) {
+    const current = timelineByUrl.get(item.url);
+    timelineByUrl.set(item.url, {
+      url: item.url,
+      title: item.title,
+      siteName: item.siteName || current?.siteName,
+      date: item.visitedAt,
+      source: 'history',
+    });
+  }
+  const timelineItems = [...timelineByUrl.values()]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 10);
 
   // Animation variants
   const containerVariants = isReducedMotion
@@ -156,9 +262,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
-            onClick={() => onStartReading?.()}
+            type="button"
+            onClick={() => setShowAddBlog((visible) => !visible)}
+            style={{ padding: '0.7rem 0.95rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+          >
+            + Add Blog
+          </button>
+          <button
+            onClick={() => continueReadingEntries[0]
+              ? onSelectArticleUrl?.(continueReadingEntries[0].url)
+              : onStartReading?.()}
             style={{
               padding: '0.75rem 1.4rem',
               borderRadius: 'var(--radius-md)',
@@ -176,10 +291,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             }}
           >
             <span>📖</span>
-            <span>Start Reading</span>
+            <span>{continueReadingEntries[0] ? 'Continue Reading' : 'Read an Article'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigateToView?.('discover')}
+            style={{ padding: '0.7rem 0.95rem', borderRadius: 'var(--radius-md)', background: 'var(--accent-surface)', color: 'var(--accent)', border: '1px solid var(--border-subtle)', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+          >
+            Discover
           </button>
         </div>
       </motion.div>
+
+      {showAddBlog && (
+        <form onSubmit={handleAddBlog} style={{ marginBottom: '1.5rem', padding: '1.25rem', borderRadius: 'var(--radius-lg)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+          <label htmlFor="add-blog-url" style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Add a blog or RSS/Atom feed</label>
+          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <input id="add-blog-url" type="url" required value={blogUrl} onChange={(event) => setBlogUrl(event.target.value)} placeholder="https://example.org" style={{ flex: '1 1 260px', minWidth: 0, padding: '0.65rem 0.8rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', background: 'var(--bg-page)', color: 'var(--text-primary)' }} />
+            <button type="submit" disabled={isAddingBlog} style={{ padding: '0.65rem 1rem', borderRadius: 'var(--radius-md)', background: 'var(--accent)', color: 'var(--accent-text)', border: 0, fontWeight: 600, cursor: isAddingBlog ? 'wait' : 'pointer' }}>
+              {isAddingBlog ? 'Finding feed…' : 'Discover feed'}
+            </button>
+          </div>
+          <p style={{ marginTop: '0.55rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>The public page is checked for its RSS or Atom feed through the safe fetch API. Your subscription is saved on this device.</p>
+        </form>
+      )}
+      {feedMessage && <p role="status" style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>{feedMessage}</p>}
+
+      <section aria-label="Reading home overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.8rem', marginBottom: '2rem' }}>
+        {[
+          { label: 'Followed blogs', value: followedFeedCount, icon: '◇' },
+          { label: 'Unread articles', value: unreadArticleCount, icon: '○' },
+          { label: 'Offline articles', value: cachedArticleCount, icon: '↓' },
+        ].map((metric) => (
+          <div key={metric.label} style={{ padding: '1rem 1.1rem', borderRadius: 'var(--radius-lg)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600 }}>
+              <span>{metric.label}</span><span aria-hidden="true">{metric.icon}</span>
+            </div>
+            <div style={{ marginTop: '0.25rem', color: 'var(--text-primary)', fontSize: '1.8rem', fontWeight: 700 }}>{metric.value}</div>
+          </div>
+        ))}
+      </section>
+      {cacheError && <p role="alert" style={{ margin: '-1.5rem 0 1.5rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>{cacheError}</p>}
 
       {/* Heading for Personal Analytics (Maintains test compatibility) */}
       <div style={{ marginBottom: '1.25rem' }}>
@@ -562,6 +714,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         )}
       </div>
+
+      <section aria-label="Recent reading timeline" style={{ marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
+          <div>
+            <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.35rem', color: 'var(--text-primary)' }}>Your reading timeline</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Feed posts and articles you opened, sorted by their latest available date.</p>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => setShowAddBlog(true)} style={{ padding: '0.45rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', fontWeight: 600, cursor: 'pointer' }}>Add Blog</button>
+            <button type="button" onClick={() => void handleRefreshFeeds()} disabled={isRefreshingFeeds || followedFeedCount === 0} style={{ padding: '0.45rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--accent-surface)', border: '1px solid var(--border-subtle)', color: 'var(--accent)', fontWeight: 600, cursor: isRefreshingFeeds ? 'wait' : 'pointer' }}>
+              {isRefreshingFeeds ? 'Refreshing…' : 'Refresh feeds'}
+            </button>
+          </div>
+        </div>
+        {timelineItems.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+            {timelineItems.map((item) => {
+              const isRead = isArticleRead(item.url);
+              return (
+                <article key={item.url} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', padding: '0.9rem 1rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                      <span>{item.siteName || 'Independent web'}</span>
+                      <span>·</span>
+                      <span>{new Date(item.date).toLocaleDateString()}</span>
+                      <span>{isRead ? 'Read' : 'Unread'}</span>
+                    </div>
+                    <h3 style={{ marginTop: '0.25rem', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', fontSize: '1rem', overflowWrap: 'anywhere' }}>{item.title}</h3>
+                  </div>
+                  <button type="button" onClick={() => onSelectArticleUrl?.(item.url)} style={{ padding: '0.45rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--accent)', color: 'var(--accent-text)', border: 0, fontWeight: 600, cursor: 'pointer' }}>
+                    {item.source === 'history' ? 'Continue reading' : 'Open article'}
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ padding: '2rem 1.25rem', textAlign: 'center', borderRadius: 'var(--radius-lg)', background: 'var(--bg-surface)', border: '1px dashed var(--border-subtle)' }}>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Your timeline is ready for independent writing.</p>
+            <button type="button" onClick={() => setShowAddBlog(true)} style={{ padding: '0.55rem 0.9rem', borderRadius: 'var(--radius-md)', background: 'var(--accent)', color: 'var(--accent-text)', border: 0, fontWeight: 600, cursor: 'pointer' }}>Add your first blog</button>
+          </div>
+        )}
+      </section>
 
       {/* 5. 7-Day Reading Chart */}
       <div

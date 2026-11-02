@@ -6,8 +6,10 @@
 
 import {
   Bookmark,
+  FollowedFeed,
   HistoryEntry,
   DailyReadingStats,
+  FeedArticle,
   ReadingGoal,
   UserProfile,
 } from '../types/article';
@@ -21,6 +23,10 @@ const KEYS = {
   onboardingCompleted: 'swr_onboarding_completed_v1',
   userProfile: 'swr_user_profile_v1',
   readUrlsToday: 'swr_read_urls_today_v1',
+  followedFeeds: 'swr_followed_feeds_v1',
+  feedArticles: 'swr_feed_articles_v1',
+  readArticles: 'swr_read_articles_v1',
+  discoveryConsent: 'swr_discovery_consent_v1',
 } as const;
 
 function read<T>(key: string, fallback: T): T {
@@ -129,6 +135,107 @@ export function removeBookmark(url: string): void {
 
 export function isBookmarked(url: string): boolean {
   return getBookmarks().some((b) => b.url === url);
+}
+
+/* -------------------------------------------------------------------------
+   Followed Feeds (Local Discovery Subscriptions)
+   ------------------------------------------------------------------------- */
+
+export function getFollowedFeeds(): FollowedFeed[] {
+  const stored = read<Array<FollowedFeed & { url?: string }>>(KEYS.followedFeeds, []);
+  return stored.flatMap((item) => {
+    const feedUrl = item.feedUrl || item.url;
+    if (!feedUrl) return [];
+    const feed = { ...item };
+    delete feed.url;
+    return [{ ...feed, feedUrl, homepageUrl: item.homepageUrl || null }];
+  });
+}
+
+export function isFollowingFeed(feedUrl: string): boolean {
+  return getFollowedFeeds().some((feed) => feed.feedUrl === feedUrl);
+}
+
+export function followFeed(feed: { feedUrl: string; homepageUrl?: string | null; title?: string | null; host?: string | null; source?: 'popular' | 'recommendation' | 'curated' | 'manual' }): FollowedFeed {
+  const items = getFollowedFeeds();
+  const existing = items.find((item) => item.feedUrl === feed.feedUrl);
+  if (existing) {
+    if (feed.homepageUrl && existing.homepageUrl !== feed.homepageUrl) {
+      return updateFollowedFeedHomepage(feed.feedUrl, feed.homepageUrl) || existing;
+    }
+    return existing;
+  }
+
+  const entry: FollowedFeed = {
+    ...feed,
+    homepageUrl: feed.homepageUrl || null,
+    followedAt: new Date().toISOString(),
+  };
+  items.unshift(entry);
+  write(KEYS.followedFeeds, items.slice(0, 500));
+  return entry;
+}
+
+export function updateFollowedFeedHomepage(feedUrl: string, homepageUrl: string): FollowedFeed | undefined {
+  try {
+    const parsed = new URL(homepageUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return undefined;
+  } catch {
+    return undefined;
+  }
+  const items = getFollowedFeeds();
+  const updated = items.map((feed) => feed.feedUrl === feedUrl ? { ...feed, homepageUrl } : feed);
+  const result = updated.find((feed) => feed.feedUrl === feedUrl);
+  if (result) write(KEYS.followedFeeds, updated);
+  return result;
+}
+
+export function unfollowFeed(feedUrl: string): void {
+  const items = getFollowedFeeds().filter((feed) => feed.feedUrl !== feedUrl);
+  write(KEYS.followedFeeds, items);
+}
+
+export function getFeedArticles(): FeedArticle[] {
+  return read<FeedArticle[]>(KEYS.feedArticles, []).sort((a, b) => {
+    const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : new Date(a.fetchedAt).getTime();
+    const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : new Date(b.fetchedAt).getTime();
+    return dateB - dateA;
+  });
+}
+
+export function saveFeedArticles(articles: FeedArticle[]): void {
+  const existing = new Map(getFeedArticles().map((article) => [article.url, article]));
+  for (const article of articles) {
+    existing.set(article.url, article);
+  }
+  write(KEYS.feedArticles, [...existing.values()].slice(0, 2000));
+}
+
+export function isArticleRead(url: string): boolean {
+  return read<string[]>(KEYS.readArticles, []).includes(url);
+}
+
+export function setArticleRead(url: string, isRead: boolean): void {
+  const readUrls = new Set(read<string[]>(KEYS.readArticles, []));
+  if (isRead) {
+    readUrls.add(url);
+  } else {
+    readUrls.delete(url);
+  }
+  write(KEYS.readArticles, [...readUrls]);
+}
+
+export function getUnreadFeedArticles(): FeedArticle[] {
+  const readUrls = new Set(read<string[]>(KEYS.readArticles, []));
+  return getFeedArticles().filter((article) => !readUrls.has(article.url));
+}
+
+export function getDiscoveryConsent(): boolean {
+  return read<boolean>(KEYS.discoveryConsent, false);
+}
+
+export function setDiscoveryConsent(consent: boolean): void {
+  write(KEYS.discoveryConsent, consent);
 }
 
 /* -------------------------------------------------------------------------

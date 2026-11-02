@@ -1,22 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
 import { ThemeProvider, useTheme } from './components/theme/ThemeProvider';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { NavigationSidebar } from './components/layout/NavigationSidebar';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
-import { LandingView } from './components/views/LandingView';
-import { DashboardView } from './components/views/DashboardView';
-import { LibraryView } from './components/views/LibraryView';
-import { BookmarksView } from './components/views/BookmarksView';
-import { HistoryView } from './components/views/HistoryView';
-import { StatsView } from './components/views/StatsView';
-import { DiscoverView } from './components/views/DiscoverView';
-import { SettingsView } from './components/views/SettingsView';
-import { ProfileView } from './components/views/ProfileView';
 import { ProfileAuthModal } from './components/views/ProfileAuthModal';
 import { WelcomeHeroScreen } from './components/onboarding/WelcomeHeroScreen';
 import { OnboardingWizard } from './components/onboarding/OnboardingWizard';
-import { ReaderCanvas } from './components/reader/ReaderCanvas';
 import { ReadingControls } from './components/reader/ReadingControls';
 import { ReadingProgressBar } from './components/reader/ReadingProgressBar';
 import { LoadingIndicator } from './components/ui/LoadingIndicator';
@@ -27,12 +17,25 @@ import { ThemePreviewBanner } from './components/theme/ThemePreviewBanner';
 import { SoundtrackDock } from './components/theme/SoundtrackDock';
 import { readerApi } from './services/api';
 import { Article, ApiError, AppView, Toast, UserProfile } from './types/article';
+import { saveCachedArticle, getCachedArticle } from './utils/offlineStore';
 import {
   isOnboardingCompleted,
   setOnboardingCompleted,
   getUserProfile,
   recordArticleRead,
+  getFeedArticles,
 } from './utils/storage';
+
+const LandingView = lazy(() => import('./components/views/LandingView').then((module) => ({ default: module.LandingView })));
+const DashboardView = lazy(() => import('./components/views/DashboardView').then((module) => ({ default: module.DashboardView })));
+const LibraryView = lazy(() => import('./components/views/LibraryView').then((module) => ({ default: module.LibraryView })));
+const BookmarksView = lazy(() => import('./components/views/BookmarksView').then((module) => ({ default: module.BookmarksView })));
+const HistoryView = lazy(() => import('./components/views/HistoryView').then((module) => ({ default: module.HistoryView })));
+const StatsView = lazy(() => import('./components/views/StatsView').then((module) => ({ default: module.StatsView })));
+const DiscoverView = lazy(() => import('./components/views/DiscoverView').then((module) => ({ default: module.DiscoverView })));
+const SettingsView = lazy(() => import('./components/views/SettingsView').then((module) => ({ default: module.SettingsView })));
+const ProfileView = lazy(() => import('./components/views/ProfileView').then((module) => ({ default: module.ProfileView })));
+const ReaderCanvas = lazy(() => import('./components/reader/ReaderCanvas').then((module) => ({ default: module.ReaderCanvas })));
 
 const MainAppContent: React.FC = () => {
   // First-time visitor state
@@ -147,31 +150,130 @@ const MainAppContent: React.FC = () => {
       const result = await readerApi.extractArticle(url);
       if (result.success) {
         setArticle(result.data);
+        try {
+          await saveCachedArticle({
+            url: result.data.url,
+            title: result.data.title,
+            content: result.data.content,
+            excerpt: result.data.excerpt,
+            byline: result.data.byline,
+            siteName: result.data.siteName,
+            publishedDate: result.data.publishedDate,
+            fetchedAt: new Date().toISOString(),
+            readingTimeMinutes: result.data.readingTimeMinutes,
+            wordCount: result.data.wordCount,
+          });
+        } catch (cacheError) {
+          const message = cacheError instanceof Error ? cacheError.message : 'Unknown offline cache error.';
+          addToast(`Article loaded, but could not save an offline copy: ${message}`, 'error');
+        }
         addToast(`Extracted "${result.data.title.slice(0, 30)}…"`, 'success');
       } else {
-        setError(result.error);
-        setArticle(null);
-        addToast(result.error.message, 'error');
+        let cached = null;
+        try {
+          cached = await getCachedArticle(url);
+        } catch (cacheError) {
+          const message = cacheError instanceof Error ? cacheError.message : 'Unknown offline cache error.';
+          addToast(`Could not check the offline article cache: ${message}`, 'error');
+        }
+        if (cached) {
+          setArticle({
+            url: cached.url,
+            title: cached.title,
+            content: cached.content,
+            excerpt: cached.excerpt,
+            byline: cached.byline,
+            siteName: cached.siteName,
+            publishedDate: cached.publishedDate,
+            readingTimeMinutes: cached.readingTimeMinutes,
+            wordCount: cached.wordCount,
+          });
+          setError(null);
+          addToast('Loaded cached article from your offline library.', 'info');
+        } else {
+          const feedItem = getFeedArticles().find((item) => item.url === url);
+          if (feedItem?.excerpt) {
+            setArticle({
+              url: feedItem.url,
+              title: feedItem.title,
+              siteName: feedItem.siteName,
+              excerpt: feedItem.excerpt,
+              content: feedItem.excerpt,
+              contentType: 'text',
+              publishedDate: feedItem.publishedAt,
+            });
+            setError(null);
+            addToast('Full extraction was unavailable; showing the publisher-provided feed summary.', 'info');
+          } else {
+            setError(result.error);
+            setArticle(null);
+            addToast(result.error.message, 'error');
+          }
+        }
       }
-    } catch (err: any) {
-      const errObj = {
-        code: 'UNEXPECTED_ERROR',
-        message: err?.message || 'An unexpected error occurred while fetching the article.',
-      };
-      setError(errObj);
-      setArticle(null);
-      addToast(errObj.message, 'error');
+    } catch (err: unknown) {
+      let cached = null;
+      try {
+        cached = await getCachedArticle(url);
+      } catch (cacheError) {
+        const message = cacheError instanceof Error ? cacheError.message : 'Unknown offline cache error.';
+        addToast(`Could not check the offline article cache: ${message}`, 'error');
+      }
+      if (cached) {
+        setArticle({
+          url: cached.url,
+          title: cached.title,
+          content: cached.content,
+          excerpt: cached.excerpt,
+          byline: cached.byline,
+          siteName: cached.siteName,
+          publishedDate: cached.publishedDate,
+          readingTimeMinutes: cached.readingTimeMinutes,
+          wordCount: cached.wordCount,
+        });
+        setError(null);
+        addToast('Loaded cached article from your offline library.', 'info');
+      } else {
+        const feedItem = getFeedArticles().find((item) => item.url === url);
+        if (feedItem?.excerpt) {
+          setArticle({
+            url: feedItem.url,
+            title: feedItem.title,
+            siteName: feedItem.siteName,
+            excerpt: feedItem.excerpt,
+            content: feedItem.excerpt,
+            contentType: 'text',
+            publishedDate: feedItem.publishedAt,
+          });
+          setError(null);
+          addToast('Network unavailable; showing the publisher-provided feed summary.', 'info');
+        } else {
+          const errObj = {
+            code: 'UNEXPECTED_ERROR',
+            message: err instanceof Error ? err.message : 'An unexpected error occurred while fetching the article.',
+          };
+          setError(errObj);
+          setArticle(null);
+          addToast(errObj.message, 'error');
+        }
+      }
     } finally {
       setIsLoading(false);
     }
   };
+
+  const navigateToView = useCallback((view: AppView) => {
+    setCurrentView(view);
+    setIsSidebarOpen(false);
+    setIsControlsOpen(false);
+  }, []);
 
   const handleReset = () => {
     setArticle(null);
     setError(null);
     setCurrentUrl('');
     setIsControlsOpen(false);
-    setCurrentView('dashboard');
+    navigateToView('dashboard');
   };
 
   // Keyboard shortcut listener
@@ -230,7 +332,7 @@ const MainAppContent: React.FC = () => {
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
         onToggleControls={() => setIsControlsOpen((prev) => !prev)}
         onOpenProfile={() => setIsProfileOpen(true)}
-        onNavigate={setCurrentView}
+        onNavigate={navigateToView}
         currentView={currentView}
         showControlsButton={true}
         profile={profile}
@@ -242,7 +344,7 @@ const MainAppContent: React.FC = () => {
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         currentView={currentView}
-        onNavigate={(view) => setCurrentView(view)}
+        onNavigate={navigateToView}
         onOpenProfile={() => setIsProfileOpen(true)}
         hasActiveArticle={!!article}
       />
@@ -281,6 +383,7 @@ const MainAppContent: React.FC = () => {
           </div>
         )}
 
+        <Suspense fallback={<LoadingIndicator message="Opening your reading space..." />}>
         {/* View 1: Landing Page (Direct URL Input) */}
         {currentView === 'landing' && !isLoading && (
           <LandingView
@@ -295,7 +398,8 @@ const MainAppContent: React.FC = () => {
           <DashboardView
             onStartReading={() => setCurrentView('landing')}
             onSelectArticleUrl={handleFetchArticle}
-            onNavigateToView={setCurrentView}
+            onNavigateToView={navigateToView}
+            onNotify={addToast}
           />
         )}
 
@@ -348,6 +452,7 @@ const MainAppContent: React.FC = () => {
           <LibraryView
             onSelectArticleUrl={(url) => handleFetchArticle(url)}
             onNotify={addToast}
+            initialTab="following"
           />
         )}
 
@@ -390,15 +495,16 @@ const MainAppContent: React.FC = () => {
         {currentView === 'profile' && (
           <ProfileView
             onOpenEditModal={() => setIsProfileOpen(true)}
-            onNavigateToView={setCurrentView}
+            onNavigateToView={navigateToView}
             onNotify={addToast}
           />
         )}
+        </Suspense>
       </main>
 
       <MobileBottomNav
         currentView={currentView}
-        onNavigate={setCurrentView}
+        onNavigate={navigateToView}
         onToggleMenu={() => setIsSidebarOpen(true)}
       />
 

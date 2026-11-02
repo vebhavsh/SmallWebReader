@@ -693,7 +693,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                       border: '1px solid var(--border-subtle)',
                     }}
                   >
-                    <strong>Local Guest Profile:</strong> Your preferences and reading goals are stored in your private browser memory. Cloud account sync will be available once the backend service is activated.
+                    <strong>Local Guest Profile:</strong> Preferences and reading data are stored in this browser; no account is required. Public URLs are sent to the configured API only when you request fetching or discovery. Sharing feed lists for aggregate discovery is opt-in.
                   </div>
                 </div>
               </motion.div>

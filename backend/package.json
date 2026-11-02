@@ -12,18 +12,22 @@
     "test:coverage": "jest --coverage --forceExit",
     "test:integration": "jest --testPathPattern=integration.test.ts --runInBand --forceExit",
     "test:smoke": "ts-node-dev --transpile-only scripts/smokeTest.ts",
-    "migrate": "ts-node-dev --transpile-only scripts/migrate.ts"
+    "migrate": "ts-node-dev --transpile-only scripts/migrate.ts",
+    "seed:demo": "ts-node-dev --transpile-only scripts/seedDatabase.ts"
   },
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.19.2",
+    "jsdom": "^26.1.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.12",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^20.14.2",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",

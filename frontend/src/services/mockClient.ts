@@ -104,16 +104,11 @@ export class MockApiClient implements ReaderApiClient {
   }
 
   async getPopularFeeds(limit = 20, offset = 0): Promise<ApiResult<PopularFeedsResponse>> {
-    const mockFeeds = [
-      { canonicalUrl: 'https://karl-voit.at/feeds/everything.atom.xml', host: 'karl-voit.at', title: 'Karl Voit', aggregateCount: 42, isSeed: true },
-      { canonicalUrl: 'https://danluu.com/atom.xml', host: 'danluu.com', title: 'Dan Luu', aggregateCount: 38, isSeed: true },
-      { canonicalUrl: 'https://gwern.net/feed', host: 'gwern.net', title: 'Gwern Branwen', aggregateCount: 35, isSeed: true },
-    ];
     return {
       success: true,
       data: {
-        feeds: mockFeeds.slice(offset, offset + limit),
-        total: mockFeeds.length,
+        feeds: [],
+        total: 0,
         limit,
         offset,
       },
@@ -126,15 +121,15 @@ export class MockApiClient implements ReaderApiClient {
         canonicalUrl: 'https://simonwillison.net/atom/everything/',
         host: 'simonwillison.net',
         title: 'Simon Willison',
-        reason: 'Frequently followed together with blogs in your feed list',
-        supportCount: 12,
+        reason: 'Demo directory entry; not based on reader co-occurrence.',
+        supportCount: 0,
       },
       {
         canonicalUrl: 'https://drewdevault.com/blog/index.xml',
         host: 'drewdevault.com',
         title: 'Drew DeVault',
-        reason: 'Frequently followed together with blogs in your feed list',
-        supportCount: 9,
+        reason: 'Demo directory entry; not based on reader co-occurrence.',
+        supportCount: 0,
       },
     ];
     return {

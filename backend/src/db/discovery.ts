@@ -1,6 +1,17 @@
 import { Pool, PoolClient } from 'pg';
 import { getDatabasePool } from './pool';
 import { canonicalizeUrl } from '../canonicalUrl';
+import { getDemoPopularFeeds, getDemoRecommendations, isDemoDiscoveryEnabled } from './demoDiscovery';
+
+const EXCLUDE_RESERVED_HOSTS_SQL =
+  "lower(regexp_replace(c.host, ':[0-9]+$', '')) !~ '(^|\\.)(example\\.(com|org|net|edu)|example|invalid|test|localhost)$'";
+const EXCLUDE_REPLACED_DIRECTORY_FEEDS_SQL =
+  "c.canonical_url NOT IN ('https://www.themarginalian.org/feed/', 'https://increment.com/feed/')";
+const RESERVED_TEST_HOST = /(^|\.)(example\.(com|org|net|edu)|example|invalid|test|localhost)$/i;
+
+function isReservedTestHost(host: string): boolean {
+  return RESERVED_TEST_HOST.test(host.toLowerCase().replace(/:\d+$/, ''));
+}
 
 export interface CanonicalFeedRow {
   id: string; // BIGINT as string in pg
@@ -18,6 +29,7 @@ export interface RecommendedFeed {
   title: string | null;
   reason: string;
   supportCount: number;
+  websiteUrl?: string | null;
 }
 
 export interface PopularFeed {
@@ -143,6 +155,17 @@ export async function queryFeedRecommendations(
   limit: number = 20,
   customPool?: Pool,
 ): Promise<RecommendedFeed[]> {
+  if (isDemoDiscoveryEnabled()) {
+    return getDemoRecommendations(inputUrls, limit).map((feed) => ({
+      canonicalUrl: feed.canonicalUrl,
+      host: feed.host,
+      title: feed.title,
+      reason: feed.reason,
+      supportCount: feed.supportCount,
+      websiteUrl: feed.websiteUrl,
+    }));
+  }
+
   const pool = customPool || getDatabasePool();
 
   // Find IDs of input feeds
@@ -154,27 +177,28 @@ export async function queryFeedRecommendations(
   const inputIdStrings = lookupRes.rows.map((r) => r.id.toString());
   const inputUrlsSet = new Set(inputUrls);
 
-  // If no input feeds are in our directory, fall back to popular feeds
+  // If no input feeds are in our directory, show curated directory entries.
   if (inputIdStrings.length === 0) {
     const popularRes = await pool.query(
       `
-      SELECT c.canonical_url, c.host, c.title, COALESCE(p.aggregate_count, 0) as agg_count
+      SELECT c.canonical_url, c.host, c.title, c.website_url
       FROM canonical_feeds c
-      LEFT JOIN feed_popularity p ON c.id = p.feed_id
       WHERE (c.is_seed = true OR c.eligible_at <= NOW())
+        AND ${EXCLUDE_REPLACED_DIRECTORY_FEEDS_SQL}
         AND NOT (c.canonical_url = ANY($1))
-      ORDER BY agg_count DESC, c.created_at DESC
+      ORDER BY c.is_seed DESC, c.created_at DESC
       LIMIT $2;
       `,
       [inputUrls, limit],
     );
 
-    return popularRes.rows.map((r) => ({
+    return popularRes.rows.filter((r) => !isReservedTestHost(r.host)).map((r) => ({
       canonicalUrl: r.canonical_url,
       host: r.host,
       title: r.title,
       reason: 'Curated independent blog from seed directory',
-      supportCount: parseInt(r.agg_count || '0', 10),
+      supportCount: 0,
+      websiteUrl: r.website_url || null,
     }));
   }
 
@@ -201,12 +225,15 @@ export async function queryFeedRecommendations(
       c.canonical_url,
       c.host,
       c.title,
+      c.website_url,
       ac.total_support,
       ac.max_single_support
     FROM aggregated_candidates ac
     JOIN canonical_feeds c ON c.id = ac.candidate_id
     WHERE (c.is_seed = true OR c.eligible_at IS NULL OR c.eligible_at <= NOW())
+      AND ${EXCLUDE_REPLACED_DIRECTORY_FEEDS_SQL}
       AND NOT (c.canonical_url = ANY($2))
+      AND ac.max_single_support >= 3
     ORDER BY ac.total_support DESC
     LIMIT $3;
   `;
@@ -217,50 +244,51 @@ export async function queryFeedRecommendations(
   const candidateUrls = new Set<string>();
 
   for (const row of candidatesRes.rows) {
+    if (isReservedTestHost(row.host)) continue;
     candidateUrls.add(row.canonical_url);
     const maxSingleSupport = parseInt(row.max_single_support || '0', 10);
     const totalSupport = parseInt(row.total_support || '0', 10);
 
     // Minimum support k=3 threshold
-    let reason = 'Frequently followed together with blogs in your feed list';
-    if (maxSingleSupport < 3) {
-      reason = 'Emerging blog recommendation';
-    }
+    if (maxSingleSupport < 3) continue;
 
     results.push({
       canonicalUrl: row.canonical_url,
       host: row.host,
       title: row.title,
-      reason,
+      reason: 'Frequently followed together with blogs in your feed list',
       supportCount: totalSupport,
+      websiteUrl: row.website_url || null,
     });
   }
 
-  // If fewer than limit, fill remaining slots with popular seeds
+  // Fill remaining slots with curated directory entries, not popularity counts.
   if (results.length < limit) {
     const needed = limit - results.length;
     const excludeUrls = Array.from(new Set([...inputUrls, ...candidateUrls]));
 
     const fillerRes = await pool.query(
       `
-      SELECT c.canonical_url, c.host, c.title, COALESCE(p.aggregate_count, 0) as agg_count
+      SELECT c.canonical_url, c.host, c.title, c.website_url
       FROM canonical_feeds c
-      LEFT JOIN feed_popularity p ON c.id = p.feed_id
       WHERE (c.is_seed = true OR c.eligible_at <= NOW())
+        AND ${EXCLUDE_REPLACED_DIRECTORY_FEEDS_SQL}
         AND NOT (c.canonical_url = ANY($1))
-      ORDER BY agg_count DESC, c.created_at DESC
+      ORDER BY c.is_seed DESC, c.created_at DESC
       LIMIT $2;
       `,
       [excludeUrls, needed],
     );
 
     for (const r of fillerRes.rows) {
+      if (isReservedTestHost(r.host)) continue;
       results.push({
         canonicalUrl: r.canonical_url,
         host: r.host,
         title: r.title,
         reason: 'Curated independent blog from seed directory',
-        supportCount: parseInt(r.agg_count || '0', 10),
+        supportCount: 0,
+        websiteUrl: r.website_url || null,
       });
     }
   }
@@ -269,20 +297,26 @@ export async function queryFeedRecommendations(
 }
 
 /**
- * Returns popular feeds based on feed_popularity and seed status.
- * Works without user contribution opt-in.
+ * Returns genuine aggregate contributions only; seeded directory rows are not popularity data.
  */
 export async function getPopularFeeds(
   limit: number = 20,
   offset: number = 0,
   customPool?: Pool,
 ): Promise<{ feeds: PopularFeed[]; total: number }> {
+  if (isDemoDiscoveryEnabled()) {
+    return getDemoPopularFeeds(limit);
+  }
+
   const pool = customPool || getDatabasePool();
 
   const countRes = await pool.query(`
     SELECT COUNT(*) as total
     FROM canonical_feeds c
-    WHERE c.is_seed = true OR c.eligible_at <= NOW();
+    LEFT JOIN feed_popularity p ON c.id = p.feed_id
+    WHERE c.is_seed = false
+      AND ${EXCLUDE_RESERVED_HOSTS_SQL}
+      AND COALESCE(p.aggregate_count, 0) > 0;
   `);
   const total = parseInt(countRes.rows[0]?.total || '0', 10);
 
@@ -295,14 +329,16 @@ export async function getPopularFeeds(
       COALESCE(p.aggregate_count, 0) AS agg_count
     FROM canonical_feeds c
     LEFT JOIN feed_popularity p ON c.id = p.feed_id
-    WHERE c.is_seed = true OR c.eligible_at <= NOW()
+    WHERE c.is_seed = false
+      AND ${EXCLUDE_RESERVED_HOSTS_SQL}
+      AND COALESCE(p.aggregate_count, 0) > 0
     ORDER BY agg_count DESC, c.created_at DESC
     LIMIT $1 OFFSET $2;
   `;
 
   const feedsRes = await pool.query(query, [limit, offset]);
 
-  const feeds: PopularFeed[] = feedsRes.rows.map((r) => ({
+  const feeds: PopularFeed[] = feedsRes.rows.filter((r) => !isReservedTestHost(r.host)).map((r) => ({
     canonicalUrl: r.canonical_url,
     host: r.host,
     title: r.title,

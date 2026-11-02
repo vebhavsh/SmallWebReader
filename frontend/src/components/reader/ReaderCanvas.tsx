@@ -2,7 +2,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import DOMPurify from 'dompurify';
 import { Article } from '../../types/article';
 import { ArticleHeader } from './ArticleHeader';
-import { isBookmarked, addBookmark, removeBookmark, addHistoryEntry } from '../../utils/storage';
+import { isBookmarked, addBookmark, removeBookmark, addHistoryEntry, isArticleRead, setArticleRead } from '../../utils/storage';
+import { getCachedArticle } from '../../utils/offlineStore';
 
 export interface ReaderCanvasProps {
   article: Article;
@@ -17,9 +18,15 @@ export interface ReaderCanvasProps {
 
 export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ article, onNotify, onArticleRead }) => {
   const [bookmarked, setBookmarked] = useState(false);
+  const [isRead, setIsRead] = useState(false);
+  const [isCachedOffline, setIsCachedOffline] = useState(false);
 
   useEffect(() => {
     setBookmarked(isBookmarked(article.url));
+    setIsRead(isArticleRead(article.url));
+    void getCachedArticle(article.url)
+      .then((cached) => setIsCachedOffline(Boolean(cached)))
+      .catch(() => setIsCachedOffline(false));
     // Record in history (addHistoryEntry already deduplicates by URL)
     addHistoryEntry({
       url: article.url,
@@ -33,6 +40,13 @@ export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ article, onNotify, o
       onArticleRead?.(article.url, article.wordCount ?? 0, article.readingTimeMinutes ?? 0);
     }
   }, [article.url]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleReadStatus = () => {
+    const nextReadStatus = !isRead;
+    setArticleRead(article.url, nextReadStatus);
+    setIsRead(nextReadStatus);
+    onNotify?.(nextReadStatus ? 'Marked as read on this device.' : 'Marked as unread on this device.', 'info');
+  };
 
   const toggleBookmark = () => {
     if (bookmarked) {
@@ -105,18 +119,37 @@ export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ article, onNotify, o
         .join('');
     }
 
-    return DOMPurify.sanitize(formatted, {
+    const cleanHtml = DOMPurify.sanitize(formatted, {
       ALLOWED_TAGS: [
         'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'blockquote', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'u',
         'a', 'img', 'figure', 'figcaption', 'pre', 'code', 'hr', 'br',
-        'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span',
+        'table', 'caption', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'section', 'div',
       ],
       ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'target', 'rel'],
       ADD_ATTR: ['target', 'rel'],
       FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input'],
       FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
     });
+
+    const parsed = new DOMParser().parseFromString(cleanHtml, 'text/html');
+    parsed.querySelectorAll('a[href], img[src]').forEach((element) => {
+      const attribute = element.tagName.toLowerCase() === 'img' ? 'src' : 'href';
+      const rawUrl = element.getAttribute(attribute);
+      try {
+        const url = new URL(rawUrl || '', article.url);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+          if (element.tagName.toLowerCase() === 'img') element.remove();
+          else element.removeAttribute(attribute);
+          return;
+        }
+        element.setAttribute(attribute, url.href);
+      } catch {
+        if (element.tagName.toLowerCase() === 'img') element.remove();
+        else element.removeAttribute(attribute);
+      }
+    });
+    return parsed.body.innerHTML;
   }, [article.content]);
 
   return (
@@ -127,10 +160,32 @@ export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ article, onNotify, o
           display: 'flex',
           justifyContent: 'flex-end',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: '0.5rem',
           marginBottom: '1.5rem',
         }}
       >
+        {isCachedOffline && (
+          <span aria-label="Available offline" style={{ marginRight: 'auto', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-full)', background: 'var(--accent-surface)', color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600 }}>
+            Available offline
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={toggleReadStatus}
+          aria-label={isRead ? 'Mark article unread' : 'Mark article read'}
+          style={{
+            padding: '0.4rem 0.75rem',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-subtle)',
+            backgroundColor: 'var(--bg-surface)',
+            color: 'var(--text-secondary)',
+            fontSize: '0.82rem',
+            cursor: 'pointer',
+          }}
+        >
+          {isRead ? 'Mark unread' : 'Mark read'}
+        </button>
         <button
           onClick={toggleBookmark}
           aria-label={bookmarked ? 'Remove bookmark' : 'Save bookmark'}
@@ -218,7 +273,14 @@ export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ article, onNotify, o
             borderRadius: 'var(--radius-md)',
           }}
         >
-          <p>No textual content could be extracted from this article.</p>
+          {article.excerpt ? (
+            <>
+              <p style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Publisher summary</p>
+              <p>{article.excerpt}</p>
+            </>
+          ) : (
+            <p>No textual content could be extracted from this article.</p>
+          )}
           <p style={{ marginTop: '0.5rem', fontSize: '0.88rem' }}>
             <a href={article.url} target="_blank" rel="noopener noreferrer">
               View original article on external site ↗

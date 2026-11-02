@@ -266,7 +266,7 @@ export const NavigationSidebar: React.FC<NavigationSidebarProps> = ({
                     {localStorage.getItem('swr_user_name') || 'Guest Reader'}
                   </div>
                   <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    Local Storage • 100% Private
+                    No account • local reading data
                   </span>
                 </div>
               </button>

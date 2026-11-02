@@ -147,13 +147,18 @@ describeOrSkip('PostgreSQL Real Database Integration Tests', () => {
     expect(recsBoth.some(r => r.canonicalUrl === feedA.canonicalUrl || r.canonicalUrl === feedB.canonicalUrl)).toBe(false);
   });
 
-  it('supports pagination on getPopularFeeds without requiring contribution', async () => {
-    // Insert 5 seed feeds
+  it('supports pagination over genuine aggregate feed entries', async () => {
+    // Populate isolated test rows without mixing seed-directory data into popularity.
     for (let i = 1; i <= 5; i++) {
       await pool.query(
         `INSERT INTO canonical_feeds (canonical_url, host, title, is_seed)
-         VALUES ($1, $2, $3, true)`,
+         VALUES ($1, $2, $3, false)`,
         [`https://seed${i}.com/feed`, `seed${i}.com`, `Seed Blog ${i}`]
+      );
+      await pool.query(
+        `INSERT INTO feed_popularity (feed_id, aggregate_count)
+         SELECT id, 1 FROM canonical_feeds WHERE canonical_url = $1`,
+        [`https://seed${i}.com/feed`]
       );
     }
 

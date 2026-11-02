@@ -5,6 +5,8 @@
  */
 
 import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
+import { gzipSync } from 'zlib';
 
 // ── Mock dns.promises.lookup ──────────────────────────────────────────────────
 jest.mock('dns', () => {
@@ -461,12 +463,72 @@ describe('POST /api/read — redirect to blocked destination', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('POST /api/read — success', () => {
+  it('decodes gzip responses before article extraction', async () => {
+    allowPublicDns();
+    const html = '<html><head><title>Compressed Article</title></head><body><article><h1>Compressed Article</h1><p>This compressed page has a useful paragraph long enough to be extracted as readable article content.</p><p>A second paragraph confirms the article structure survives decompression.</p></article></body></html>';
+    const fakeReq = makeFakeRequest();
+    const fakeRes = new PassThrough() as PassThrough & FakeResponse;
+    fakeRes.statusCode = 200;
+    fakeRes.headers = {
+      'content-type': 'text/html; charset=utf-8',
+      'content-encoding': 'gzip',
+    };
+
+    mockHttpRequestImpl.mockImplementationOnce(
+      (_opts: unknown, cb: (r: FakeResponse) => void) => {
+        fakeReq.end.mockImplementationOnce(() => {
+          cb(fakeRes);
+          fakeRes.end(gzipSync(Buffer.from(html)));
+        });
+        return fakeReq;
+      },
+    );
+
+    const res = await request(app)
+      .post('/api/read')
+      .send({ url: 'http://example.com/compressed-article' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.title).toBe('Compressed Article');
+    expect(res.body.content).toContain('This compressed page has a useful paragraph');
+    expect(res.body.content).toContain('<p>');
+  });
+
+  it('enforces the response size limit after decompression', async () => {
+    allowPublicDns();
+    const fakeReq = makeFakeRequest();
+    const fakeRes = new PassThrough() as PassThrough & FakeResponse;
+    fakeRes.statusCode = 200;
+    fakeRes.headers = {
+      'content-type': 'text/html; charset=utf-8',
+      'content-encoding': 'gzip',
+    };
+
+    mockHttpRequestImpl.mockImplementationOnce(
+      (_opts: unknown, cb: (r: FakeResponse) => void) => {
+        fakeReq.end.mockImplementationOnce(() => {
+          cb(fakeRes);
+          fakeRes.end(gzipSync(Buffer.alloc(5 * 1024 * 1024 + 1, 0x61)));
+        });
+        return fakeReq;
+      },
+    );
+
+    const res = await request(app)
+      .post('/api/read')
+      .send({ url: 'http://example.com/oversized-compressed-response' });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error.code).toBe('PAGE_FETCH_FAILED');
+    expect(res.body.error.message).toBe('Response exceeds maximum allowed size.');
+  });
+
   it('returns 200 with url, title and content for a valid HTML page', async () => {
     allowPublicDns();
     const html = `<!DOCTYPE html>
 <html>
 <head><title>Test Article</title></head>
-<body><article><p>Hello world.</p></article></body>
+<body><article><h1>Test Article</h1><p>Hello world. This is a representative article paragraph with enough content for semantic extraction.</p><p>A second paragraph confirms that text remains structured for the reader.</p></article></body>
 </html>`;
 
     const fakeReq = makeFakeRequest();
@@ -495,13 +557,17 @@ describe('POST /api/read — success', () => {
     expect(res.body).toHaveProperty('title', 'Test Article');
     expect(res.body).toHaveProperty('content');
     expect(res.body.content).toContain('Hello world.');
-    // Exact contract fields — no extras
-    expect(Object.keys(res.body).sort()).toEqual(['content', 'title', 'url']);
+    expect(res.body.contentType).toBe('html');
+    expect(res.body.content).toContain('<p>');
+    expect(Object.keys(res.body).sort()).toEqual([
+      'byline', 'content', 'contentType', 'excerpt', 'leadImageUrl',
+      'publishedDate', 'siteName', 'title', 'url',
+    ]);
   });
 
   it('returns null title when <title> is absent', async () => {
     allowPublicDns();
-    const html = '<html><body><p>No title here.</p></body></html>';
+    const html = '<html><body><main><p>No title here. This is a complete first paragraph with enough meaningful text to be extracted.</p><p>A second paragraph confirms that this page has readable content but no title element.</p></main></body></html>';
 
     const fakeReq = makeFakeRequest();
     const fakeRes = makeFakeResponse({
@@ -528,7 +594,7 @@ describe('POST /api/read — success', () => {
     expect(res.body.title).toBeNull();
   });
 
-  it('handles empty HTML response body safely', async () => {
+  it('returns a clear extraction error for empty HTML response bodies', async () => {
     allowPublicDns();
     const fakeReq = makeFakeRequest();
     const fakeRes = makeFakeResponse({
@@ -551,14 +617,13 @@ describe('POST /api/read — success', () => {
       .post('/api/read')
       .send({ url: 'http://example.com/empty' });
 
-    expect(res.status).toBe(200);
-    expect(res.body.title).toBeNull();
-    expect(res.body.content).toBe('');
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('EXTRACTION_FAILED');
   });
 
   it('handles malformed HTML without crashing', async () => {
     allowPublicDns();
-    const malformed = '<html><head><title>Unclosed</head><body><p>Unclosed paragraph<script>alert(1)';
+    const malformed = '<html><head><title>Unclosed</title></head><body><article><h1>Unclosed article</h1><p>This malformed paragraph contains enough real editorial text for the readability parser to recover a useful article from the broken source markup.<p>A second paragraph remains present after the missing closing tags.<script>alert(1)';
 
     const fakeReq = makeFakeRequest();
     const fakeRes = makeFakeResponse({
@@ -629,7 +694,8 @@ describe('POST /api/read — success', () => {
           </header>
           <main class="content">
             <h1>Pride and Prejudice</h1>
-            <p>"Pride and Prejudice" by Jane Austen is a novel published in 1813. It follows Elizabeth Bennet.</p>
+            <p>"Pride and Prejudice" by Jane Austen is a novel published in 1813. It follows Elizabeth Bennet through choices, misunderstandings, and changing family circumstances.</p>
+            <p>The story follows its characters through a series of visits and conversations that reveal their values and relationships.</p>
           </main>
           <footer>Footer info</footer>
         </body>
@@ -658,7 +724,7 @@ describe('POST /api/read — success', () => {
       .send({ url: 'http://example.com/ebooks/1342' });
 
     expect(res.status).toBe(200);
-    expect(res.body.title).toBe('Pride and Prejudice by Jane Austen | Project Gutenberg');
+    expect(res.body.title).toContain('Pride and Prejudice by Jane Austen');
     expect(res.body.content).toContain('by Jane Austen is a novel published in 1813');
     expect(res.body.content).toContain('It follows Elizabeth Bennet');
   });
@@ -669,7 +735,8 @@ describe('POST /api/read — success', () => {
       <html>
         <head><title>Quotes &#38; Dashes</title></head>
         <body>
-          <p>&#8220;Hello World&#8221; &#8212; test &#x27;hex&#x27;</p>
+          <p>&#8220;Hello World&#8221; &#8212; test &#x27;hex&#x27; inside this representative article paragraph.</p>
+          <p>A second paragraph ensures enough article text while preserving the original entity-decoding regression.</p>
         </body>
       </html>
     `;

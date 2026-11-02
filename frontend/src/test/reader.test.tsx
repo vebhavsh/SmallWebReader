@@ -41,6 +41,16 @@ describe('ReaderCanvas Sanitization & Rendering', () => {
     expect(img?.getAttribute('onerror')).toBeNull();
   });
 
+  it('removes unsafe links and non-web image sources', () => {
+    const unsafeArticle: Article = {
+      ...sampleArticle,
+      content: '<p><a href="javascript:alert(1)">Unsafe link</a></p><img src="data:image/svg+xml,<svg onload=alert(1)>" alt="unsafe">',
+    };
+    const { container } = render(<ReaderCanvas article={unsafeArticle} />);
+    expect(container.querySelector('.reader-prose a')?.getAttribute('href')).toBeNull();
+    expect(container.querySelector('.reader-prose img')).not.toBeInTheDocument();
+  });
+
   it('handles empty content gracefully with fallback notice', () => {
     const emptyArticle: Article = {
       url: 'https://example.com/empty',

@@ -27,7 +27,7 @@ People seeking a simple, privacy-respecting way to discover, follow, and read in
   - Manages subscriptions, read/unread states, and content caches exclusively in local browser storage (e.g. IndexedDB / localStorage).
   - Explicit user opt-in required before submitting any contribution batch to discovery.
 - **Backend (API Service):**
-  - Stateless article reading and safe URL proxying (`GET /health`, `POST /api/read`, planned `GET /api/fetch`).
+  - Stateless article reading and safe URL proxying (`GET /health`, `POST /api/read`, `GET /api/fetch`).
   - Privacy-preserving discovery service (`POST /api/discovery/query`, `POST /api/discovery/submit`, `GET /api/discovery/popular`).
   - No server-side reader identities, reading histories, or raw query logs.
 
@@ -35,14 +35,14 @@ People seeking a simple, privacy-respecting way to discover, follow, and read in
 
 ### Confirmed & Implemented (Backend)
 - `GET /health` — liveness check.
-- `POST /api/read` — safe fetching and plain-text readable content extraction with SSRF protections, timeout, and response-size bounds.
+- `POST /api/read` — safe fetching and sanitized semantic article extraction with SSRF protections, timeout, and response-size bounds.
 - 40 automated tests and local in-process smoke tests.
 
-### Planned Discovery & Fetch Endpoints (Not Implemented)
+### Implemented Discovery & Fetch Endpoints
 - `GET /api/fetch?url=...` — bounded proxy to fetch public feed/page XML/HTML for client-side parsing.
-- `POST /api/discovery/query` — transparent feed recommendations based on aggregate co-occurrence.
-- `POST /api/discovery/submit` — optional user-consented batch contribution updating aggregate counts.
-- `GET /api/discovery/popular` — curated seed feeds and popularity rankings requiring no user contributions.
+- `POST /api/discovery/query` — PostgreSQL-backed feed recommendations with minimum support `k = 3` and labeled directory fallback.
+- `POST /api/discovery/submit` — optional user-consented batch contribution updating aggregate counts; disabled in explicit demo mode.
+- `GET /api/discovery/popular` — genuine opt-in aggregate rankings; empty until eligible contributions exist.
 
 ## 5. Explicitly out of scope
 
@@ -70,7 +70,7 @@ Do not implement or plan work around:
 ## 7. Planned discovery & database direction
 
 - **Ranking Engine:** Transparent, deterministic ranking based on aggregate co-occurrence counters, not black-box ML.
-- **Database Engine:** PostgreSQL (with Supabase as a hosting option). Database is planned; no live database is connected yet.
+- **Database Engine:** PostgreSQL (with Supabase as a hosting option), configured through the backend environment.
 - **Logical Data Model (4 Tables):**
   1. `canonical_feeds`: Canonical feed URL and limited public feed metadata (title, site URL).
   2. `feed_pairs`: Aggregate co-subscription counts between unordered feed pairs `(feed_a, feed_b)`.
@@ -83,7 +83,7 @@ Do not implement or plan work around:
 
 ## 8. Requirements still needing confirmation
 
-1. Exact JSON request and response field schemas for all 4 planned endpoints.
+1. The workspace API contract is documented in `docs/API_CONTRACT.md`; future contract changes still require team confirmation.
 2. Canonical URL normalization rules (handling query strings, tracking tags, trailing slashes, scheme variations).
 3. Exact ranking score formula and normalization math when merging popularity and pair counts.
 4. Database column types, constraints, index definitions, and migration strategies.

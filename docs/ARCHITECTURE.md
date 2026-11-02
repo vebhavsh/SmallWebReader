@@ -1,6 +1,6 @@
 # SmallWebReader — Architecture
 
-> **Status:** Working architecture draft. Core URL reading and security are implemented; discovery engine and PostgreSQL persistence are planned.
+> **Status:** Current workspace implementation. Core URL reading, PostgreSQL-backed discovery, and explicit demo fixtures are implemented.
 
 ## 1. System topology
 
@@ -10,17 +10,17 @@ Browser Client (Separate Workspace / Laptop)
   |-- RSS/Atom XML feed parsing & HTML sanitization
   |
   |-- POST /api/read  (Implemented: safe reading proxy)
-  |-- GET  /api/fetch (Planned: safe feed fetching proxy)
-  |-- POST /api/discovery/query  (Planned: get feed recommendations)
-  |-- POST /api/discovery/submit (Planned: opted-in aggregate contribution)
-  |-- GET  /api/discovery/popular (Planned: seed directory browsing)
+  |-- GET  /api/fetch (Implemented: safe feed fetching proxy)
+  |-- POST /api/discovery/query  (Implemented: PostgreSQL-backed recommendations)
+  |-- POST /api/discovery/submit (Implemented: opted-in aggregate contribution)
+  |-- GET  /api/discovery/popular (Implemented: genuine aggregate popularity)
   v
 Backend API Service (Node.js + Express + TypeScript)
   |-- URL security: IP validation (IPv4/IPv6 private/link-local/multicast blocks), DNS rebinding guard
   |-- Safe fetch: strict timeouts (10s), bounded size (5MB), redirect hop limit (5)
-  |-- Extractor: plain-text content extraction without scripts/styles
+  |-- Extractor: Mozilla Readability + cleaned publisher-container fallback; sanitized semantic HTML
   v
-Database (Planned: PostgreSQL / Supabase)
+Database (PostgreSQL / Supabase)
   |-- Canonical feed directory
   |-- Aggregate pair co-occurrence counters
   |-- Aggregate feed popularity counters
@@ -33,9 +33,9 @@ Database (Planned: PostgreSQL / Supabase)
 |---|---|---|
 | Backend Runtime & Framework | **Confirmed & Implemented** | Node.js LTS + Express + TypeScript |
 | Testing & Verification | **Confirmed & Implemented** | Jest + Supertest + Local Smoke Runner |
-| Content Extraction | **Confirmed & Implemented** | Deterministic Regex/DOM Text Extractor |
-| Database Engine | **Planned** | PostgreSQL (Supabase compatible) |
-| Recommendation Model | **Planned** | Transparent deterministic co-occurrence (`k = 3` support) |
+| Content Extraction | **Implemented** | `@mozilla/readability` + JSDOM, sanitized semantic HTML |
+| Database Engine | **Implemented** | PostgreSQL (Supabase compatible) |
+| Recommendation Model | **Implemented** | Transparent co-occurrence (`k = 3`) with labeled directory fallback |
 | Frontend | **In progress on separate laptop** | Vanilla JS / modern client-side framework |
 
 ## 3. Data model & privacy architecture (Planned)
@@ -43,7 +43,7 @@ Database (Planned: PostgreSQL / Supabase)
 ### Database Entities
 1. `canonical_feeds`:
    - Unique canonical feed URL.
-   - Public metadata: feed title, site URL, description, active status.
+   - Public metadata: feed title and separately stored publisher homepage URL (never a substitute for the canonical feed URL).
 2. `feed_pairs`:
    - Unordered pair identifiers: `(feed_a_id, feed_b_id)` with `feed_a_id < feed_b_id`.
    - `co_occurrence_count`: aggregate integer incremented during consented contributions.

@@ -10,7 +10,7 @@ const router = Router();
  * API_CONTRACT.md §2
  *
  * Request body:  { "url": "https://example.com/article" }
- * Success 200:   { "url": string, "title": string|null, "content": string }
+ * Success 200:   article metadata and sanitized semantic HTML content
  * Errors:        { "error": { "code": string, "message": string } }
  */
 router.post('/read', async (req: Request, res: Response): Promise<void> => {
@@ -39,13 +39,22 @@ router.post('/read', async (req: Request, res: Response): Promise<void> => {
   }
 
   // ── 3. Extract readable content ─────────────────────────────────────────
-  const { title, content } = extractContent(fetchResult.body);
+  const extracted = extractContent(fetchResult.body, fetchResult.finalUrl);
+  if (!extracted) {
+    res.status(422).json({
+      error: {
+        code: 'EXTRACTION_FAILED',
+        message: 'The publisher page did not contain a readable article. Open the original page or try another article URL.',
+      },
+    });
+    return;
+  }
 
   // ── 4. Return contract-defined shape ────────────────────────────────────
   res.status(200).json({
     url: fetchResult.finalUrl,
-    title,
-    content,
+    ...extracted,
+    contentType: 'html',
   });
 });
 

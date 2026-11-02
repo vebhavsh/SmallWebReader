@@ -23,6 +23,15 @@ export async function checkRateLimit(
   limit: number = 60,
   customPool?: Pool,
 ): Promise<RateLimitResult> {
+  if (process.env.USE_DEMO_DISCOVERY === 'true') {
+    return {
+      allowed: true,
+      currentCount: 0,
+      remaining: limit,
+      resetAt: new Date(Date.now() + 60 * 60 * 1000),
+    };
+  }
+
   const secret = process.env.RATE_LIMIT_HMAC_SECRET || 'dev_ephemeral_hmac_secret_2026';
   const ipHash = hashClientIp(rawIp, secret);
 

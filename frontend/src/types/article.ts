@@ -58,6 +58,7 @@ export interface PopularFeed {
   canonicalUrl: string;
   host: string;
   title: string | null;
+  websiteUrl?: string | null;
   aggregateCount: number;
   isSeed: boolean;
 }
@@ -75,6 +76,7 @@ export interface RecommendationItem {
   title: string | null;
   reason: string;
   supportCount: number;
+  websiteUrl?: string | null;
 }
 
 export interface DiscoveryQueryResponse {
@@ -112,6 +114,25 @@ export interface Bookmark {
   readProgress?: number; // 0-100
   genre?: string;
   readingTimeMinutes?: number;
+}
+
+export interface FollowedFeed {
+  feedUrl: string;
+  homepageUrl?: string | null;
+  title?: string | null;
+  host?: string | null;
+  followedAt: string;
+  source?: 'popular' | 'recommendation' | 'curated' | 'manual';
+}
+
+export interface FeedArticle {
+  feedUrl: string;
+  url: string;
+  title: string;
+  siteName: string;
+  excerpt?: string;
+  publishedAt?: string | null;
+  fetchedAt: string;
 }
 
 export interface HistoryEntry {

@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Metadata fallback title</title>
+    <meta property="og:title" content="A Real Publisher Article">
+    <meta property="og:site_name" content="Example Journal">
+    <meta property="og:description" content="A publisher-provided summary of the article.">
+    <meta property="og:image" content="../images/lead.jpg">
+    <meta name="author" content="Alex Writer">
+    <meta property="article:published_time" content="2025-03-04T10:30:00Z">
+  </head>
+  <body>
+    <header>
+      <a href="/">Skip to main content</a>
+      <nav><a href="/models">Explore models</a><a href="/gemini">Gemini</a></nav>
+    </header>
+    <div class="cookie-banner">Accept cookies to continue</div>
+    <main>
+      <article>
+        <h1>A Real Publisher Article</h1>
+        <p>This opening paragraph introduces the central subject and gives readers a useful overview of the article before the detailed sections begin.</p>
+        <h2>Careful Analysis</h2>
+        <p>The main article discusses evidence, methods, and important context. <em>Emphasis is preserved</em>, and <a href="../research">the cited research</a> remains linked.</p>
+        <ul><li>First useful point</li><li>Second useful point</li></ul>
+        <blockquote><p>A quotation from the article that is meaningful to its argument.</p></blockquote>
+        <figure><img src="../images/diagram.jpg" alt="Article diagram" onerror="alert(1)"><figcaption>A figure from the publisher.</figcaption></figure>
+        <pre><code>const article = 'readable';</code></pre>
+        <table><tbody><tr><th>Measure</th><td>Value</td></tr></tbody></table>
+        <a href="javascript:alert(1)" onclick="alert(2)">Unsafe link</a>
+        <img src="javascript:alert(3)" alt="Unsafe image">
+      </article>
+    </main>
+    <script>window.injected = true;</script>
+    <footer>Privacy policy · Related stories · Newsletter signup</footer>
+  </body>
+</html>

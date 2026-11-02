@@ -71,7 +71,7 @@ export const UrlSubmitBar: React.FC<UrlSubmitBarProps> = ({
         {isFixture && (
           <div style={{ marginTop: '0.75rem' }}>
             <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-              Try sample fixtures:
+              Demo samples — read locally from fixtures; no article is fetched:
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
               {Object.entries(SAMPLE_ARTICLES).map(([sampleUrl, article]) => (

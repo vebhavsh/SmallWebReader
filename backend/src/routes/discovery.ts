@@ -83,7 +83,7 @@ router.post('/query', async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({
       error: {
         code: 'INTERNAL_ERROR',
-        message: 'Unexpected server-side failure during recommendation query.',
+        message: 'Related recommendations are temporarily unavailable because the discovery database could not be reached. Please try again.',
       },
     });
   }
@@ -104,6 +104,16 @@ router.post('/submit', async (req: Request, res: Response): Promise<void> => {
         error: {
           code: 'CONSENT_REQUIRED',
           message: 'Contribution requires explicit user consent (consent must be true).',
+        },
+      });
+      return;
+    }
+
+    if (process.env.USE_DEMO_DISCOVERY === 'true') {
+      res.status(503).json({
+        error: {
+          code: 'DEMO_MODE',
+          message: 'Contribution is disabled in demo mode and no data was recorded.',
         },
       });
       return;
@@ -173,6 +183,7 @@ router.post('/submit', async (req: Request, res: Response): Promise<void> => {
       status: 'accepted',
       feedsProcessed: result.feedsUpdated,
       pairsUpdated: result.pairsUpdated,
+      demoMode: process.env.USE_DEMO_DISCOVERY === 'true',
     });
   } catch (err) {
     res.status(500).json({
@@ -209,7 +220,7 @@ router.get('/popular', async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({
       error: {
         code: 'INTERNAL_ERROR',
-        message: 'Unexpected server-side failure fetching popular feeds.',
+        message: 'Popular feeds are temporarily unavailable because the discovery database could not be reached. Please try again.',
       },
     });
   }

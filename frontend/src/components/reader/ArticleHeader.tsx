@@ -27,8 +27,20 @@ export const ArticleHeader: React.FC<ArticleHeaderProps> = ({ article }) => {
     hostname = article.siteName || '';
   }
 
+  let leadImageUrl: string | null = null;
+  if (article.leadImageUrl) {
+    try {
+      const imageUrl = new URL(article.leadImageUrl, article.url);
+      if (['http:', 'https:'].includes(imageUrl.protocol) && !imageUrl.username && !imageUrl.password) {
+        leadImageUrl = imageUrl.href;
+      }
+    } catch {
+      leadImageUrl = null;
+    }
+  }
+
   return (
-    <header style={{ marginBottom: '2.5rem' }}>
+    <header style={{ marginBottom: '2rem' }}>
       {/* Site / Origin metadata */}
       <div
         style={{
@@ -52,7 +64,7 @@ export const ArticleHeader: React.FC<ArticleHeaderProps> = ({ article }) => {
       <h1
         style={{
           fontFamily: 'var(--font-serif)',
-          fontSize: '2.4rem',
+          fontSize: 'clamp(1.7rem, 5vw, 2.4rem)',
           fontWeight: 700,
           lineHeight: 1.25,
           color: 'var(--text-primary)',
@@ -113,11 +125,14 @@ export const ArticleHeader: React.FC<ArticleHeaderProps> = ({ article }) => {
       </div>
 
       {/* Lead Image if supplied */}
-      {article.leadImageUrl && (
+      {leadImageUrl && (
         <figure style={{ marginTop: '1.75rem', marginInline: 0 }}>
           <img
-            src={article.leadImageUrl}
+            src={leadImageUrl}
             alt={article.title}
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+            }}
             style={{
               width: '100%',
               maxHeight: '480px',

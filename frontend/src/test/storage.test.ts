@@ -14,6 +14,14 @@ import {
   setReadingGoal,
   isArticleReadToday,
   getTodayReadUrls,
+  saveFeedArticles,
+  getFeedArticles,
+  getUnreadFeedArticles,
+  setArticleRead,
+  getFollowedFeeds,
+  followFeed,
+  isFollowingFeed,
+  unfollowFeed,
 } from '../utils/storage';
 
 describe('Local Storage Guest Persistence', () => {
@@ -67,6 +75,56 @@ describe('Local Storage Guest Persistence', () => {
 
       clearHistory();
       expect(getHistory()).toEqual([]);
+    });
+
+    describe('Feed timeline and local read state', () => {
+      it('migrates legacy followed URL data into separate feed and homepage fields', () => {
+        localStorage.setItem('swr_followed_feeds_v1', JSON.stringify([{
+          url: 'https://publisher.example/rss.xml',
+          title: 'Publisher',
+          followedAt: '2026-10-20T10:00:00.000Z',
+        }]));
+
+        expect(getFollowedFeeds()).toEqual([{
+          feedUrl: 'https://publisher.example/rss.xml',
+          homepageUrl: null,
+          title: 'Publisher',
+          followedAt: '2026-10-20T10:00:00.000Z',
+        }]);
+        expect(isFollowingFeed('https://publisher.example/rss.xml')).toBe(true);
+      });
+
+      it('preserves the feed URL for follow and unfollow while storing homepage separately', () => {
+        const feed = followFeed({
+          feedUrl: 'https://publisher.example/rss.xml',
+          homepageUrl: 'https://publisher.example/',
+          title: 'Publisher',
+        });
+
+        expect(feed.feedUrl).toBe('https://publisher.example/rss.xml');
+        expect(feed.homepageUrl).toBe('https://publisher.example/');
+        expect(isFollowingFeed(feed.feedUrl)).toBe(true);
+        unfollowFeed(feed.feedUrl);
+        expect(getFollowedFeeds()).toEqual([]);
+      });
+
+      it('persists feed posts and read/unread state locally', () => {
+        saveFeedArticles([{
+          feedUrl: 'https://blog.example/feed.xml',
+          url: 'https://blog.example/post',
+          title: 'A new post',
+          siteName: 'Example Blog',
+          publishedAt: '2026-10-20T10:00:00.000Z',
+          fetchedAt: '2026-10-20T10:05:00.000Z',
+        }]);
+
+        expect(getFeedArticles()).toHaveLength(1);
+        expect(getUnreadFeedArticles()).toHaveLength(1);
+        setArticleRead('https://blog.example/post', true);
+        expect(getUnreadFeedArticles()).toHaveLength(0);
+        setArticleRead('https://blog.example/post', false);
+        expect(getUnreadFeedArticles()).toHaveLength(1);
+      });
     });
   });
 

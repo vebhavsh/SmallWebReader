@@ -33,6 +33,8 @@ export const Header: React.FC<HeaderProps> = ({
   const isFixture = isFixtureModeEnabled();
   const { currentThemeConfig, updateSettings, updateSoundtrackSettings } = useTheme();
 
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [searchInput, setSearchInput] = useState('');
@@ -47,6 +49,16 @@ export const Header: React.FC<HeaderProps> = ({
       setIsPlayingSoundtrack(state.isPlaying);
     });
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const updateStatus = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateStatus);
+    window.addEventListener('offline', updateStatus);
+    return () => {
+      window.removeEventListener('online', updateStatus);
+      window.removeEventListener('offline', updateStatus);
+    };
   }, []);
 
   // Close menus on outside click
@@ -173,6 +185,7 @@ export const Header: React.FC<HeaderProps> = ({
                 fontWeight: 700,
                 letterSpacing: '-0.02em',
               }}
+              className="header-brand-name"
             >
               SmallWebReader
             </span>
@@ -187,6 +200,7 @@ export const Header: React.FC<HeaderProps> = ({
                 alignItems: 'center',
                 gap: '0.4rem',
               }}
+              className="header-breadcrumb"
             >
               <span>/</span>
               <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
@@ -206,11 +220,29 @@ export const Header: React.FC<HeaderProps> = ({
                 fontWeight: 600,
                 border: '1px solid var(--border-subtle)',
               }}
+              className="header-fixture-badge"
               title="Development fixtures enabled (VITE_USE_DEV_FIXTURES=true)"
             >
               Fixtures
             </span>
           )}
+
+          <span
+            style={{
+              fontSize: '0.68rem',
+              padding: '0.18rem 0.5rem',
+              borderRadius: 'var(--radius-full)',
+              backgroundColor: isOnline ? 'rgba(34, 197, 94, 0.12)' : 'rgba(248, 113, 113, 0.12)',
+              color: isOnline ? '#15803d' : '#b91c1c',
+              fontWeight: 700,
+              border: '1px solid var(--border-subtle)',
+            }}
+            className="header-online-status"
+            aria-label={isOnline ? 'Online' : 'Offline'}
+            title={isOnline ? 'Online' : 'Offline'}
+          >
+            {isOnline ? 'Online' : 'Offline'}
+          </span>
         </div>
 
         {/* Center: Search Bar (Desktop / Tablet) */}
@@ -252,12 +284,13 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right Side: Quick Actions, Theme, Soundtrack, Notifications, Profile */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {/* Quick Soundtrack Toggle */}
           <button
             onClick={handleToggleSoundtrack}
             aria-label={isPlayingSoundtrack ? 'Pause atmosphere soundtrack' : 'Play atmosphere soundtrack'}
             title={`Soundtrack: ${currentThemeConfig.soundtrack.title} (${isPlayingSoundtrack ? 'Playing' : 'Muted'})`}
+            className="header-soundtrack-toggle"
             style={{
               padding: '0.4rem 0.65rem',
               borderRadius: 'var(--radius-md)',
@@ -279,7 +312,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {/* Theme Switcher Dropdown */}
-          <div ref={themeMenuRef} style={{ position: 'relative' }}>
+          <div ref={themeMenuRef} style={{ position: 'relative' }} className="header-theme-switcher">
             <button
               onClick={() => setIsThemeMenuOpen((prev) => !prev)}
               aria-label="Switch visual theme"
@@ -299,7 +332,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
             >
               <span>🎨</span>
-              <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>
+              <span className="header-action-label" style={{ fontSize: '0.8rem', fontWeight: 500 }}>
                 {currentThemeConfig.name}
               </span>
             </button>
@@ -387,7 +420,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
             >
               <span style={{ fontWeight: 700 }}>Aa</span>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Appearance</span>
+              <span className="header-action-label" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Appearance</span>
             </button>
           )}
 
@@ -413,7 +446,7 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Profile Avatar Dropdown */}
-          <div ref={profileMenuRef} style={{ position: 'relative' }}>
+          <div ref={profileMenuRef} style={{ position: 'relative' }} className="header-profile-menu">
             <button
               onClick={() => setIsProfileMenuOpen((prev) => !prev)}
               aria-label={`Account and preferences (${profile?.displayName || 'Guest'})`}
@@ -442,10 +475,11 @@ export const Header: React.FC<HeaderProps> = ({
                   fontWeight: 500,
                   fontSize: '0.82rem',
                 }}
+                className="header-profile-name"
               >
                 {profile?.displayName || 'Guest'}
               </span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>▾</span>
+              <span className="header-profile-caret" style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>▾</span>
             </button>
 
             {isProfileMenuOpen && (
