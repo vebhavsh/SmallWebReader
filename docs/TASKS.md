@@ -67,5 +67,5 @@ Phase 9: Integration with Frontend
 | Task | Owner | Status | Notes |
 |---|---|---|---|
 | Frontend client development (separate laptop) | Frontend owner | IN PROGRESS | HTML, CSS, JS; local IndexedDB storage |
-| Cross-laptop CORS & LAN network verification | Both | TODO | Verify connectivity over local network |
-| End-to-end integration testing | Both | TODO | Core reading flow + discovery flows |
+| Cross-laptop CORS & LAN network verification | Both | DONE (TESTED) | Verify connectivity over local network |
+| End-to-end integration testing | Both | DONE (TESTED) | Core reading flow + discovery flows |
